@@ -1,3 +1,4 @@
+// Modified for btop-cluster: separate reusable rendering from single-host UI state.
 /* Copyright 2021 Aristocratos (jakob@qvantnet.com)
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +30,14 @@ using std::string;
 using std::vector;
 
 namespace Theme {
+	struct Options {
+		string name = "Default";
+		bool lowcolor = false;
+		bool background = true;
+		bool tty_mode = false;
+	};
+	void setTheme(const Options& options);
+
 	extern std::filesystem::path theme_dir;
 	extern std::filesystem::path user_theme_dir;
 	extern std::filesystem::path custom_theme_dir;

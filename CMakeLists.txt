@@ -1,3 +1,4 @@
+# Modified for btop-cluster: shared rendering and optional prototype targets.
 # SPDX-License-Identifier: Apache-2.0
 #
 # CMake configuration for btop
@@ -50,6 +51,9 @@ add_library(libbtop OBJECT
   src/btop_cli.cpp
   src/btop_config.cpp
   src/btop_draw.cpp
+  src/btop_draw_primitives.cpp
+  src/btop_render_support.cpp
+  src/btop_theme_legacy.cpp
   src/btop_input.cpp
   src/btop_log.cpp
   src/btop_menu.cpp
@@ -272,6 +276,11 @@ install(FILES "btop.desktop" DESTINATION "share/applications")
 install(FILES "Img/icon.png" DESTINATION "share/icons/hicolor/48x48/apps" RENAME "btop.png")
 install(FILES "Img/icon.svg" DESTINATION "share/icons/hicolor/scalable/apps" RENAME "btop.svg")
 install(DIRECTORY "themes" DESTINATION "share/btop")
+
+option(BTOP_CLUSTER "Build the multi-host rendering prototype" OFF)
+if(BTOP_CLUSTER)
+  add_subdirectory(src/cluster)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)

@@ -1,0 +1,5 @@
+# Preserve upstream archive and license text verbatim, including original whitespace.
+docs/upstream/** -whitespace
+include/gcc-runtime/COPYING.RUNTIME -whitespace
+include/httplib/LICENSE -whitespace
+include/nlohmann-LICENSE.MIT -whitespace

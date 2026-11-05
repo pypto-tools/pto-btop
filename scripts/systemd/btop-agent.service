@@ -1,0 +1,13 @@
+[Unit]
+Description=btop-cluster HTTPS metrics uploader
+
+[Service]
+ExecStart=%h/.local/bin/btop-agent --config %h/.config/btop-cluster/node/agent.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=6
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

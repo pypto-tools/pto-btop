@@ -1,3 +1,4 @@
+// Modified for btop-cluster: separate reusable rendering from single-host UI state.
 /* Copyright 2021 Aristocratos (jakob@qvantnet.com)
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +22,6 @@ tab-size = 4
 #include <unistd.h>
 #include <algorithm>
 
-#include "btop_config.hpp"
 #include "btop_log.hpp"
 #include "btop_theme.hpp"
 #include "btop_tools.hpp"
@@ -239,13 +239,13 @@ namespace Theme {
 		}
 
 		//* Generate colors and rgb decimal vectors for the theme
-		void generateColors(const std::unordered_map<string, string>& source) {
+		void generateColors(const std::unordered_map<string, string>& source, const Options& options) {
 			vector<string> t_rgb;
 			string depth;
-			bool t_to_256 = Config::getB("lowcolor");
+			bool t_to_256 = options.lowcolor;
 			colors.clear(); rgbs.clear();
 			for (const auto& [name, color] : Default_theme) {
-				if (name == "main_bg" and not Config::getB("theme_background")) {
+				if (name == "main_bg" and not options.background) {
 						colors[name] = "\x1b[49m";
 						rgbs[name] = {-1, -1, -1};
 						continue;
@@ -303,9 +303,9 @@ namespace Theme {
 		}
 
 		//* Generate color gradients from two or three colors, 101 values indexed 0-100
-		void generateGradients() {
+		void generateGradients(const Options& options) {
 			gradients.clear();
-			bool t_to_256 = Config::getB("lowcolor");
+			bool t_to_256 = options.lowcolor;
 
 			//? Insert values for processes greyscale gradient and processes color gradient
 			rgbs.insert({
@@ -363,11 +363,11 @@ namespace Theme {
 		}
 
 		//* Set colors and generate gradients for the TTY theme
-		void generateTTYColors() {
+		void generateTTYColors(const Options& options) {
 			rgbs.clear();
 			gradients.clear();
 			colors = TTY_theme;
-			if (not Config::getB("theme_background"))
+			if (not options.background)
 				colors["main_bg"] = "\x1b[49m";
 
 			for (const auto& c : colors) {
@@ -448,8 +448,8 @@ namespace Theme {
 
 	}
 
-	void setTheme() {
-		const auto& theme = Config::getS("color_theme");
+	void setTheme(const Options& options) {
+		const auto& theme = options.name;
 		const auto theme_cfg_path = fs::path(theme);
 		fs::path theme_path;
 		for (const fs::path p : themes) {
@@ -459,11 +459,11 @@ namespace Theme {
 				break;
 			}
 		}
-		if (theme == "TTY" or Config::getB("tty_mode"))
-			generateTTYColors();
+		if (theme == "TTY" or options.tty_mode)
+			generateTTYColors(options);
 		else {
-			generateColors((theme == "Default" or theme_path.empty() ? Default_theme : loadFile(theme_path)));
-			generateGradients();
+			generateColors((theme == "Default" or theme_path.empty() ? Default_theme : loadFile(theme_path)), options);
+			generateGradients(options);
 		}
 		Term::fg = colors.at("main_fg");
 		Term::bg = colors.at("main_bg");

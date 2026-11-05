@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+
+file(STRINGS "${PROJECT_SOURCE_DIR}/VERSION" BTOP_CLUSTER_VERSION LIMIT_COUNT 1)
+if(NOT BTOP_CLUSTER_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z0-9.]+)?$")
+  message(FATAL_ERROR "Invalid cluster VERSION")
+endif()
+configure_file(version.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/cluster_version.hpp" @ONLY)
+option(BTOP_CLUSTER_STATIC_CXX_RUNTIME "Bundle GCC C++ runtime in monitor executables" OFF)
+
+add_library(btop_render STATIC
+  ../btop_draw_primitives.cpp
+  ../btop_render_support.cpp
+  ../btop_theme.cpp
+  ../btop_log.cpp
+)
+target_include_directories(btop_render PUBLIC ..)
+target_include_directories(btop_render SYSTEM PUBLIC ../../include)
+target_compile_definitions(btop_render PUBLIC FMT_HEADER_ONLY)
+target_compile_options(btop_render PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(btop_render PUBLIC Threads::Threads)
+
+add_library(cluster_view STATIC view.cpp detail.cpp model.cpp frame.cpp)
+target_link_libraries(cluster_view PUBLIC btop_render)
+target_include_directories(cluster_view PUBLIC .)
+target_compile_options(cluster_view PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(btop-cluster main.cpp terminal.cpp version.cpp session.cpp)
+target_link_libraries(btop-cluster PRIVATE cluster_view)
+target_compile_options(btop-cluster PRIVATE -Wall -Wextra -Wpedantic)
+set_target_properties(btop-cluster PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# Headless collection and protocol contain no terminal/UI dependencies.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(FATAL_ERROR "btop-cluster collection currently supports Linux")
+endif()
+find_package(nlohmann_json 3.11 REQUIRED)
+add_library(cluster_protocol STATIC ../protocol/protocol.cpp)
+target_include_directories(cluster_protocol PUBLIC .. "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(cluster_protocol PUBLIC nlohmann_json::nlohmann_json)
+target_compile_options(cluster_protocol PRIVATE -Wall -Wextra -Wpedantic)
+add_library(cluster_collector STATIC ../collector/linux.cpp ../collector/filesystems.cpp)
+target_link_libraries(cluster_collector PUBLIC cluster_protocol)
+target_compile_options(cluster_collector PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(btop-agent ../agent/main.cpp)
+target_link_libraries(btop-agent PRIVATE cluster_collector)
+target_compile_options(btop-agent PRIVATE -Wall -Wextra -Wpedantic)
+set_target_properties(btop-agent PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+target_link_libraries(cluster_view PUBLIC cluster_protocol)
+
+# HTTPS hub and transport. The vendored library is pinned in include/httplib/upstream.json.
+find_package(OpenSSL 3.0 REQUIRED)
+add_library(cluster_https STATIC ../net/common.cpp)
+target_include_directories(cluster_https SYSTEM PRIVATE ../../include)
+target_compile_definitions(cluster_https PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+target_link_libraries(cluster_https PUBLIC cluster_protocol OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+target_compile_options(cluster_https PRIVATE -Wall -Wextra -Wpedantic)
+target_sources(btop-cluster PRIVATE https.cpp)
+target_link_libraries(btop-cluster PRIVATE cluster_https)
+target_sources(btop-agent PRIVATE ../agent/https.cpp)
+target_link_libraries(btop-agent PRIVATE cluster_https)
+add_executable(btop-server ../server/main.cpp ../cluster/version.cpp)
+target_include_directories(btop-server SYSTEM PRIVATE ../../include)
+target_compile_definitions(btop-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+target_compile_options(btop-server PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(btop-server PRIVATE cluster_https cluster_view)
+set_target_properties(btop-server PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+install(TARGETS btop-cluster btop-agent btop-server RUNTIME DESTINATION bin COMPONENT btop-cluster)
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/themes/" DESTINATION share/btop-cluster/themes COMPONENT btop-cluster)
+install(FILES "${PROJECT_SOURCE_DIR}/LICENSE" DESTINATION share/btop-cluster/licenses COMPONENT btop-cluster)
+install(FILES "${PROJECT_SOURCE_DIR}/include/httplib/LICENSE" DESTINATION share/btop-cluster/licenses RENAME httplib-LICENSE COMPONENT btop-cluster)
+install(FILES "${PROJECT_SOURCE_DIR}/include/fmt/LICENSE.rst" DESTINATION share/btop-cluster/licenses RENAME fmt-LICENSE COMPONENT btop-cluster)
+install(FILES "${PROJECT_SOURCE_DIR}/include/nlohmann-LICENSE.MIT" DESTINATION share/btop-cluster/licenses COMPONENT btop-cluster)
+
+if(BTOP_CLUSTER_STATIC_CXX_RUNTIME)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "BTOP_CLUSTER_STATIC_CXX_RUNTIME currently requires GCC")
+  endif()
+  foreach(program btop-cluster btop-agent btop-server)
+    target_link_options(${program} PRIVATE -static-libstdc++ -static-libgcc)
+  endforeach()
+endif()

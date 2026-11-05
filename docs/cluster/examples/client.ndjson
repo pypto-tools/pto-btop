@@ -1,0 +1,3 @@
+{"type":"subscribe","version":1,"request_id":1,"interval_ms":2000,"detail":false,"processes":{"enabled":false,"sort":"cpu","limit":20,"filter":""},"mounts":["/"],"disk_devices":["nvme0n1"],"network_interfaces":["eth0"]}
+{"type":"subscribe","version":1,"request_id":2,"interval_ms":2000,"detail":true,"processes":{"enabled":true,"sort":"cpu","limit":20,"filter":""},"mounts":["/"],"disk_devices":["nvme0n1"],"network_interfaces":["eth0"]}
+{"type":"stop","version":1,"request_id":3}

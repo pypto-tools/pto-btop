@@ -1,3 +1,4 @@
+// Modified for btop-cluster: separate reusable rendering from single-host UI state.
 /* Copyright 2021 Aristocratos (jakob@qvantnet.com)
 
    Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +32,9 @@ using std::string;
 using std::vector;
 
 namespace Symbols {
+	extern const string meter;
+	extern const array<string, 10> superscript;
+	extern const std::unordered_map<string, vector<string>> graph_symbols;
 	extern const string h_line;
 	extern const string v_line;
 	extern const string dotted_v_line;
@@ -60,6 +64,15 @@ namespace Symbols {
 }
 
 namespace Draw {
+	struct Style {
+		bool tty_mode = false;
+		bool rounded_corners = true;
+		std::string graph_symbol = "braille";
+	};
+
+	string createBox(int x, int y, int width, int height, string line_color, bool fill,
+		std::string_view title, std::string_view title2, int num, const Style& style);
+
 
 	//* Generate if needed and return the btop++ banner
 	string banner_gen(int y=0, int x=0, bool centered=false, bool redraw=false);
@@ -122,6 +135,10 @@ namespace Draw {
 			const string& symbol="default",
 			bool invert=false, bool no_zero=false,
 			long long max_value=0, long long offset=0);
+
+		Graph(int width, int height, const string& color_gradient, const deque<long long>& data,
+			const string& symbol, bool invert, bool no_zero, long long max_value,
+			long long offset, const Style& style);
 
 		//* Add last value from back of <data> and return string representation of graph
 		string& operator()(const deque<long long>& data, bool data_same=false);

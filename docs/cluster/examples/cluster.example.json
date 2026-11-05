@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "interval_ms": 2000,
+  "history_seconds": 600,
+  "theme": "Default",
+  "hosts": [
+    {
+      "id": "dev-01",
+      "label": "dev-01",
+      "ssh_alias": "dev-01",
+      "agent_path": "/opt/btop-cluster/bin/btop-agent",
+      "mounts": [
+        "/"
+      ],
+      "disk_devices": [],
+      "network_interfaces": []
+    },
+    {
+      "id": "dev-02",
+      "label": "dev-02",
+      "ssh_alias": "dev-02",
+      "agent_path": "/opt/btop-cluster/bin/btop-agent",
+      "mounts": [
+        "/"
+      ],
+      "disk_devices": [],
+      "network_interfaces": []
+    },
+    {
+      "id": "dev-03",
+      "label": "dev-03",
+      "ssh_alias": "dev-03",
+      "agent_path": "/opt/btop-cluster/bin/btop-agent",
+      "mounts": [
+        "/"
+      ],
+      "disk_devices": [],
+      "network_interfaces": []
+    },
+    {
+      "id": "dev-04",
+      "label": "dev-04",
+      "ssh_alias": "dev-04",
+      "agent_path": "/opt/btop-cluster/bin/btop-agent",
+      "mounts": [
+        "/"
+      ],
+      "disk_devices": [],
+      "network_interfaces": []
+    }
+  ]
+}

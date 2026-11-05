@@ -1,0 +1,80 @@
+{
+  "repository": "https://github.com/aristocratos/btop.git",
+  "revision": "e28a2701c7208ff00ab780a68287e2204f356ba0",
+  "source_branch": "main",
+  "clone_depth": 1,
+  "fetched_on": "2026-11-04",
+  "commit_time": "2026-11-03T11:46:17+00:00",
+  "version_string": "1.4.8",
+  "release_tag_verified": false,
+  "project_license": "Apache-2.0",
+  "planned_json_dependency": {
+    "repository": "https://github.com/nlohmann/json",
+    "version": "3.12.0",
+    "source": "https://github.com/nlohmann/json/releases/tag/v3.12.0",
+    "asset": "json.hpp",
+    "sha256": "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63",
+    "downloaded": false
+  },
+  "implementation_status": "https_hub_agent_tui_implemented_real_three_host_deployment_pending",
+  "json_dependency": {
+    "repository": "https://github.com/nlohmann/json",
+    "version_tested": "3.11.3",
+    "minimum_cmake_package_version": "3.11",
+    "integration": "find_package(nlohmann_json 3.11 REQUIRED)",
+    "source": "preinstalled_system_package",
+    "vendored": false,
+    "license": "MIT",
+    "license_sha256": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14"
+  },
+  "validation": {
+    "date": "2026-11-05",
+    "ctest_passed": 25,
+    "real_remote_hosts_tested": 0,
+    "fake_ssh_hosts_tested": 4,
+    "differential_redraw_verified": true,
+    "reference_layout_verified": true,
+    "detail_terminal_sizes": [
+      "80x24",
+      "100x30",
+      "120x36",
+      "160x48",
+      "200x60"
+    ],
+    "https_local_agents_tested": 3,
+    "https_local_terminal_clients_tested": 3,
+    "https_certificate_and_access_control_verified": true,
+    "https_restart_recovery_verified": true,
+    "release_install_upgrade_verified": true
+  },
+  "cluster_version": "0.4.0-alpha.1",
+  "https_dependency": {
+    "repository": "https://github.com/yhirose/cpp-httplib",
+    "version": "v0.64.0",
+    "files": {
+      "httplib.h": {
+        "url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.64.0/httplib.h",
+        "sha256": "805169049e6a6e9ba7729d7e01d14ced825029c88a277586602a6b38df4d5357"
+      },
+      "LICENSE": {
+        "url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.64.0/LICENSE",
+        "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b"
+      }
+    },
+    "openssl_version_tested": "3.0.8"
+  },
+  "public_name": "pto-btop",
+  "release_preparation": {
+    "github_repository_created": true,
+    "github_actions_executed": false,
+    "remote_architectures_verified": [],
+    "installer": "scripts/install.py",
+    "package_builder": "scripts/package.py",
+    "gcc_runtime_linkage": "static_in_release_builds",
+    "maximum_glibc_package_requirement": "2.36",
+    "local_architecture_verified": "arm64",
+    "repository": "https://github.com/pypto-tools/pto-btop",
+    "build_results": "https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml",
+    "upstream_history_completed": true
+  }
+}

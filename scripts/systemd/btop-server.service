@@ -1,0 +1,13 @@
+[Unit]
+Description=btop-cluster HTTPS metrics hub
+
+[Service]
+ExecStart=%h/.local/bin/btop-server --config %h/.config/btop-cluster/server/server.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=6
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

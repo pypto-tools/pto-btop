@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/yhirose/cpp-httplib",
+  "version": "v0.64.0",
+  "files": {
+    "httplib.h": {
+      "url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.64.0/httplib.h",
+      "sha256": "805169049e6a6e9ba7729d7e01d14ced825029c88a277586602a6b38df4d5357"
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.64.0/LICENSE",
+      "sha256": "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b"
+    }
+  }
+}
