@@ -107,3 +107,18 @@ OpenSSH 的退出码不能区分所有认证和网络原因；诊断不明确时
 processes.data.selected 可为 null 或选中进程对象。成功时 detail_status=ok，返回身份、CPU／RSS、用户／状态／线程／父 PID／nice／运行时长、command、read_bytes_total、write_bytes_total。I/O 是累计字节，不是速率；读取权限不足时字段为 null。身份失效时 detail_status=gone，未扫描到或无法访问时为 unavailable，读取中途失败可为 partial；客户端不将这些状态解释为空闲。
 
 CPU 增加 model、uptime_seconds、user_pct、system_pct、cores[].temperature_c；磁盘增加 activity_pct（忙碌毫秒差分／实际间隔 ×100，上限 100）；网络增加 address；文件系统增加 source 和 free_bytes。新增字段缺失时客户端显示 N/A。新旧版本基础 CPU／RSS 订阅仍兼容，要使用新增排序和选中详情应同步部署 0.3.0 agent。
+
+## 0.5.0 可选资源组与 UID 过滤
+
+新增 sessions、cards 两组，包装仍为 status / observed_monotonic_ms / interval_ms / data。
+sessions 为 utmpx 去重账号与会话数、age_ms、每账号 sessions 和 first_login_at（Unix 秒）。
+cards 为 [task-submit schema 1](task-submit-monitor-api.md) 的公开白名单字段。
+未知或失败不能编码为零；每次转发缓存时保留原观察时间并递增 age_ms。
+
+HTTPS 注册响应 metric_groups=["sessions","cards"] 声明扩展支持；没有声明时新 agent
+回退为原 5 组。新中心仍要求原 5 组完整存在，可选组独立校验，未知组或错误计数拒收，
+拒收不更新上一份有效快照。旧节点缺少新组时 TUI 显示 N/A。
+
+filter 新增 uid:NUM，NUM 是 0..4294967295 的十进制整数，和进程 uid 做等值匹配。
+空／负数／溢出 UID 不匹配任何进程；user:TEXT 的模糊匹配和普通名称过滤不变。
+卡占用者联动只在新鲜卡数据且占用 UID 已知时触发，仍使用每个查看者自己的订阅。

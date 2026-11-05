@@ -214,3 +214,40 @@ TEST(cluster_frame, real_panels_theme_and_overlays_match_full_frames_without_cle
 		}
 	}
 }
+
+TEST(cluster_state, card_selection_owner_uid_and_unavailable_resources) {
+	auto hosts=Cluster::demo_hosts(); auto& host=hosts[0];
+	Cluster::move_card(host,2); EXPECT_EQ(host.selected_card,"2");
+	host.cards_focus=true;
+	EXPECT_TRUE(Cluster::filter_card_owner(host)); EXPECT_EQ(host.filter,"uid:1000"); EXPECT_FALSE(host.cards_focus);
+	Cluster::advance_demo(hosts,400); EXPECT_EQ(Cluster::metric_data(host,"processes")["matched"],40);
+	std::reverse(host.groups["cards"]["data"]["devices"].begin(),host.groups["cards"]["data"]["devices"].end());
+	Cluster::move_card(host,0); EXPECT_EQ(host.selected_card,"2");
+	host.groups["cards"]["data"]["age_ms"]=16000;
+	EXPECT_EQ(Cluster::resource_status(host,"cards"),"STALE"); EXPECT_FALSE(Cluster::filter_card_owner(host));
+	EXPECT_EQ(Cluster::card_summary(host,true),"--");
+	host.groups["cards"]["data"]["age_ms"]=0;
+	host.groups["cards"]["data"]["scheduler"]["state"]="maintenance";
+	EXPECT_EQ(Cluster::resource_status(host,"cards"),"MAINTENANCE"); EXPECT_FALSE(Cluster::filter_card_owner(host));
+	host.groups["cards"]["data"]["scheduler"]["state"]="running";
+	host.groups["cards"]["data"]["inventory_complete"]=false;
+	EXPECT_EQ(Cluster::resource_status(host,"cards"),"UNKNOWN"); EXPECT_EQ(Cluster::card_summary(host,true),"--");
+	host.groups.erase("cards"); host.groups.erase("sessions");
+	EXPECT_EQ(Cluster::resource_status(host,"cards"),"N/A"); EXPECT_EQ(Cluster::session_summary(host,true),"--/--");
+}
+TEST(cluster_frame, card_focus_details_fold_and_users_overlay_preserve_frames) {
+	std::setlocale(LC_CTYPE,"C.UTF-8"); Theme::setTheme(Theme::Options{});
+	for (const	auto& [width,height] : {std::pair{80,24},{120,36},{160,48},{200,60}}) {
+		auto hosts=Cluster::demo_hosts(); Cluster::FrameDiff frames; Cluster::Screen terminal(width,height);
+		for (int step=0; step<7; ++step) {
+			hosts[0].cards_focus=step>=1 and step<=3; hosts[0].card_detail=step==2;
+			hosts[0].cards_folded=step==4; hosts[0].users_open=step==5;
+			Cluster::move_card(hosts[0],step==3 ? 7 : 0);
+			const	auto frame=Cluster::render(hosts,width,height,0,true,{});
+			const	auto delta=frames.update(frame,width,height);
+			if (step)	EXPECT_EQ(delta.find("\x1b[2J"),std::string::npos);
+			terminal.apply(delta); Cluster::Screen expected(width,height); expected.apply(frame);
+			EXPECT_EQ(terminal.cells(),expected.cells())<<width<<"x"<<height<<" step "<<step;
+		}
+	}
+}

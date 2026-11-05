@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
+#include <ctime>
 #include <fmt/format.h>
 
 namespace Cluster {
@@ -103,16 +104,11 @@ std::string cpu(const Host& host,const Rect& r,const Draw::Style& style) {
 	const int page=host.core_page%pages;
 	auto label=title(host,"cpu","cpu "+safe_text(host.name,r.width/5)+" | "+host.status);
 	auto out=box(r,label,"cpu_box",style);
-	if (not host.sample_time.empty() and r.width>=100)
+	if (not host.sample_time.empty() and r.width>=150)
 		out+=border(r,(r.width-13)/2,host.sample_time+" UTC");
-	const auto group=host.groups.find("cpu");
-	if (group!=host.groups.end()) {
-		const auto interval=number(*group,"interval_ms");
-		if (interval>0) {
-			const auto rate=fmt::format("{:.0f}ms",interval);
-			out+=border(r,r.width-columns(rate)-4,rate);
-		}
-	}
+	const auto users=r.width>=120 ? session_summary(host)+" [u]" : "users/sess "+session_summary(host,true)+" [u]";
+	out+=border(r,r.width-columns(users)-3,users);
+
 	const int upper=(r.height-3)/2, middle=r.y+1+upper, lower=r.height-4-upper;
 	const auto lower_metric=host.cpu_metric=="system_pct" ? "user_pct" : "system_pct";
 	out+=graph(r.x+1,r.y+1,chart_width,upper,history(host,host.cpu_metric),"cpu",style);
@@ -277,6 +273,85 @@ std::string network(const Host& host,const Rect& r,const Draw::Style& style) {
 	return out;
 }
 
+const Json& selected_card(const Host& host) {
+	for (const auto& item : metric_items(metric_data(host,"cards"),"devices")) if (item.at("id")==host.selected_card) return item;
+	return empty;
+}
+std::string card_color(const std::string& state) {
+	return state=="free" ? "cpu_start" : state=="allocated" or state=="error" or state=="external" ? "cpu_end" : state=="reserved" ? "cpu_mid" : "inactive_fg";
+}
+std::string cards(const Host& host,const Rect& r,const Draw::Style& style,bool folded=false) {
+	const auto state=resource_status(host,"cards");
+	const bool fresh=state=="ok" or state=="partial";
+	const auto& data=metric_data(host,"cards");
+	auto out=box(r,"cards"+std::string(host.cards_focus ? " [focus]" : "")+(fresh ? " | queue" : " | "+state),host.cards_focus ? "hi_fg" : "mem_box",style);
+	out+=line(r,1,card_summary(host));
+	if (folded or r.height<=4) return out;
+	out+=line(r,2,queue_summary(host));
+	const auto& items=metric_items(data,"devices");
+	if (items.empty()) {
+		out+=line(r,4,fresh ? "No card devices" : "Card data unavailable","inactive_fg");
+		const auto found=host.groups.find("cards");
+		if (found!=host.groups.end()) out+=line(r,5,text(*found,"reason"),"inactive_fg");
+		return out;
+	}
+	int detail_rows=host.card_detail and r.height>=11 ? 3 : 0;
+	const int count=std::max(1,r.height-5-detail_rows);
+	int selected=0;
+	for (std::size_t i=0; i<items.size(); ++i) if (items[i].at("id")==host.selected_card) selected=i;
+	const int start=(selected/count)*count;
+	const bool show_task=r.width>=68, show_group=r.width>=50;
+	const int user_width=std::clamp(r.width/6,8,16), task_width=std::max(8,r.width-user_width-35);
+	auto table=[&](const std::string& id,const std::string& group,const std::string& kind,const std::string& user,const std::string& task,const std::string& age) {
+		return cell(id,4,true)+" "+(show_group ? cell(group,5)+" " : "")+cell(kind,9)+" "+cell(user,user_width)+" "+(show_task ? cell(task,task_width)+" " : "")+age;
+	};
+	out+=line(r,3,table("ID","GROUP","STATE","USER","TASK","AGE"),"title");
+	for (int i=0; i<count and start+i<int(items.size()); ++i) {
+		const auto& item=items[start+i];
+		const auto& allocation=item.at("allocation"); const auto& reservation=item.at("reservation");
+		const auto& owner=allocation.is_object() ? allocation : reservation.is_object() ? reservation : empty;
+		const auto kind=item.at("state").get<std::string>();
+		const auto label=kind=="allocated" ? "HELD" : kind=="free" ? "FREE" : kind=="reserved" ? "RESERVED" : kind=="disabled" ? "DISABLED" : kind=="error" ? "ERROR" : kind=="external" ? "EXTERNAL" : "UNKNOWN";
+		const auto elapsed=number(allocation,"elapsed_seconds");
+		const auto age=elapsed<0 ? "-" : fmt::format("{}m",static_cast<long long>(elapsed)/60);
+		const auto value=table(text(item,"id"),text(item,"group_id","?"),fresh ? label : "last",text(owner,"user","-"),text(owner,"task_id","-"),age);
+		if (host.cards_focus and start+i==selected) {
+			out+=Mv::to(r.y+4+i,r.x+1)+Theme::c("selected_bg")+std::string(r.width-2,' ')+Mv::to(r.y+4+i,r.x+1)+Theme::c("selected_fg")+safe_text(value,r.width-2)+Theme::c("main_bg");
+		} else out+=line(r,4+i,value,fresh ? card_color(kind) : "inactive_fg");
+	}
+	if (detail_rows) {
+		const auto& item=selected_card(host); const int row=r.height-4;
+		if (not item.empty()) {
+			const auto& allocation=item.at("allocation"); const auto& reservation=item.at("reservation");
+			out+=line(r,row,"Task: "+text(allocation,"task_id","-")+" / "+text(allocation,"user","-"));
+			out+=line(r,row+1,"Reserved: "+text(reservation,"user","-")+" / "+text(reservation,"task_id","-"));
+			std::string reasons; for (const auto& reason : item.at("reason_codes")) { if (not reasons.empty()) reasons+=","; reasons+=reason.get<std::string>(); }
+			out+=line(r,row+2,"Reason: "+(reasons.empty() ? "none" : reasons),"inactive_fg");
+		}
+	}
+	out+=border(r,2,safe_text(fmt::format("v focus  o fold  f owner | {}/{}  health N/A",selected+1,items.size()),r.width-6),"inactive_fg",true);
+	return out;
+}
+std::string user_list(const Host& host,const Rect& r,const Draw::Style& style) {
+	const auto state=resource_status(host,"sessions");
+	auto out=box(r,"users | "+state,"hi_fg",style,"u / Esc close  PgUp/PgDn page");
+	out+=line(r,1,session_summary(host));
+	out+=line(r,2,"Registered login sessions; accounts are deduplicated","inactive_fg");
+	out+=line(r,4,cell("USER",26)+cell("SESSIONS",10)+"SINCE (UTC)","title");
+	const auto& items=metric_items(metric_data(host,"sessions"));
+	const int count=std::max(1,r.height-7), pages=std::max(1,int(items.size()+count-1)/count), start=(host.users_page%pages)*count;
+	for (int i=0; i<count and start+i<int(items.size()); ++i) {
+		const auto& item=items[start+i]; std::string since="N/A";
+		if (item.at("first_login_at").is_number_integer()) {
+			const auto stamp=item.at("first_login_at").get<std::time_t>(); std::tm tm{}; char formatted[32];
+			if (gmtime_r(&stamp,&tm) and std::strftime(formatted,sizeof(formatted),"%m-%d %H:%M",&tm)) since=formatted;
+		}
+		out+=line(r,5+i,cell(text(item,"user"),26)+cell(fmt::format("{:.0f}",number(item,"sessions")),10)+since,state=="ok" or state=="partial" ? "main_fg" : "inactive_fg");
+	}
+	if (items.empty()) out+=line(r,5,state=="ok" ? "No registered logins" : "Login records unavailable","inactive_fg");
+	return out;
+}
+
 const Json& chosen_process(const Host& host) {
 	const auto& data=metric_data(host,"processes");
 	const auto chosen=data.find("selected");
@@ -399,7 +474,21 @@ std::string detail_view(const Host& host,int width,int height,const Draw::Style&
 	out+=memory(host,mem,style);
 	out+=disks(host,disk,style);
 	out+=network(host,{2,y+memory_height+1,left,net_height},style);
-	out+=processes(host,{left+3,y,width-left-4,remaining},style);
+	const Rect right{left+3,y,width-left-4,remaining};
+	if (remaining<18 and host.cards_focus) out+=cards(host,right,style);
+	else if (host.proc_detail) out+=processes(host,right,style);
+	else {
+		const bool folded=host.cards_folded or remaining<18;
+		const int cards_height=folded ? 3 : std::clamp(remaining/2,8,15);
+		out+=cards(host,{right.x,right.y,right.width,cards_height},style,folded);
+		out+=processes(host,{right.x,right.y+cards_height+1,right.width,right.height-cards_height-1},style);
+	}
 	return out;
 }
+std::string users_overlay(const Host& host,int width,int height,const Draw::Style& style) {
+	if (width<80 or height<24) return "";
+	const int w=std::min(78,width-6),h=std::min(22,height-4);
+	return user_list(host,{(width-w)/2,(height-h)/2,w,h},style);
+}
+
 }

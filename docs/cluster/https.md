@@ -2,7 +2,7 @@
 
 0.4.0 系列已实现 HTTPS 上报、中心缓存和终端读取。三台机器各运行一个 agent、各自打开 TUI；中心运行在其中一台。现有 `--local`、`--ssh`、`--demo` 保留。
 
-发布准备版为 `0.4.0-alpha.1`，安装与升级见 [发布说明](release.md)。对外命令为 `pto-btop`、`pto-btop-agent`、`pto-btop-server`，下文仍使用兼容的源码构建程序名。
+当前源码版本为 `0.5.0-alpha.1`，安装与升级见 [发布说明](release.md)。对外命令为 `pto-btop`、`pto-btop-agent`、`pto-btop-server`，下文仍使用兼容的源码构建程序名。
 
 当前产物为本机 Linux aarch64 构建。已完成的是本机回环地址上的三个真实 agent、三个独立终端测试；三台真实开发机尚未指定和部署，x86_64 产物也尚未构建。
 

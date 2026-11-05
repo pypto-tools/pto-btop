@@ -95,7 +95,9 @@ def main():
         docs.mkdir(parents=True)
         for doc in ("release.md", "https.md", "prototype.md", "detail-preview.png", "upstream.json",
                     "README.md", "design.md", "deployment.md", "implementation.md",
-                    "centralized-https.md", "protocol.md", "source-study.md", "third-party.md"):
+                    "centralized-https.md", "protocol.md", "source-study.md", "third-party.md",
+                    "resources-monitoring.md", "task-submit-monitor-api.md",
+                    "resources-overview.png", "resources-detail.png"):
             shutil.copy2(source / "docs/cluster" / doc, docs / doc)
         shutil.copytree(source / "docs/cluster/examples", docs / "examples")
         licenses = root / "share/btop-cluster/licenses"

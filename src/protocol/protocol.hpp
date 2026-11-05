@@ -26,6 +26,7 @@ struct Subscription {
 
 std::uint64_t now_ms();
 std::string utc_now();
+Json document(std::string_view line);
 Json parse(std::string_view line);
 Subscription subscription(const Json& message);
 Json encode(const Subscription& request);

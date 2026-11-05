@@ -11,7 +11,7 @@ import termios
 import time
 from pathlib import Path
 
-from terminal_support import Screen, read_until, resize, screen
+from terminal_support import Screen, resize, screen
 
 agent, client = map(os.path.abspath, sys.argv[1:3])
 
@@ -51,7 +51,7 @@ try:
     reader = Reader(process.stdout)
     hello = reader.get()
     assert hello["type"] == "hello"
-    assert set(hello["capabilities"]) == {"cpu", "memory", "filesystems", "disks", "network", "processes"}
+    assert set(hello["capabilities"]) == {"cpu", "memory", "filesystems", "disks", "network", "processes", "sessions", "cards", "uid_filter"}
     send(process, request(1))
     assert reader.get()["type"] == "subscribed"
     first = reader.get()
@@ -59,7 +59,7 @@ try:
     assert first["groups"]["cpu"]["data"]["usage_pct"] is None
     assert 0 <= second["groups"]["cpu"]["data"]["usage_pct"] <= 100
     assert second["seq"] > first["seq"]
-    assert set(second["groups"]) == set(hello["capabilities"])
+    assert set(second["groups"]) == set(hello["capabilities"]) - {"uid_filter"}
     mem = second["groups"]["memory"]["data"]
     assert mem["used_bytes"] == mem["total_bytes"] - mem["available_bytes"]
     assert b"\x1b" not in json.dumps(second).encode()
@@ -165,8 +165,10 @@ for width, height in ((80, 24), (100, 30), (120, 36), (160, 48), (200, 60)):
         assert process.wait(timeout=5) == 0
     finally:
         if process.poll() is None:
-            process.kill(); process.wait()
-        os.close(master); os.close(slave)
+            process.kill()
+            process.wait()
+        os.close(master)
+        os.close(slave)
 
 # Substitute ssh itself, preserving the exact argv contract; no network or credentials required.
 with tempfile.TemporaryDirectory(prefix="btop-fake-ssh-") as temporary:

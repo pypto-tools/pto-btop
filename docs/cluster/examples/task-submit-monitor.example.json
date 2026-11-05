@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "producer": {
+    "name": "pto-task",
+    "version": "example-revision"
+  },
+  "boot_id": "00000000-0000-4000-8000-000000000001",
+  "snapshot_seq": 42,
+  "observed_at": "2026-11-05T10:00:00Z",
+  "age_ms": 120,
+  "status": "ok",
+  "reason": null,
+  "scheduler": {
+    "state": "running",
+    "mode": "pool_aware_reservation",
+    "accepting_submissions": true,
+    "dispatching": true,
+    "running_tasks": 2,
+    "pending_tasks": 2,
+    "max_concurrent": 8,
+    "reason": null
+  },
+  "summary": {
+    "total": 8,
+    "free": 3,
+    "allocated": 3,
+    "reserved": 1,
+    "disabled": 1,
+    "external": 0,
+    "error": 0,
+    "unknown": 0,
+    "occupying_users": 2
+  },
+  "external_detection": "unsupported",
+  "devices": [
+    {
+      "id": "0",
+      "group_id": "g0",
+      "pool_eligible": true,
+      "state": "free",
+      "reason_codes": [],
+      "allocation": null,
+      "reservation": null,
+      "health": "unknown"
+    },
+    {
+      "id": "1",
+      "group_id": "g0",
+      "pool_eligible": true,
+      "state": "free",
+      "reason_codes": [],
+      "allocation": null,
+      "reservation": null,
+      "health": "unknown"
+    },
+    {
+      "id": "2",
+      "group_id": "g0",
+      "pool_eligible": true,
+      "state": "allocated",
+      "reason_codes": [
+        "allocated"
+      ],
+      "allocation": {
+        "task_id": "task-a",
+        "user": "alice",
+        "uid": 1000,
+        "started_at": "2026-11-05T09:47:20Z",
+        "elapsed_seconds": 760
+      },
+      "reservation": null,
+      "health": "unknown"
+    },
+    {
+      "id": "3",
+      "group_id": "g0",
+      "pool_eligible": true,
+      "state": "allocated",
+      "reason_codes": [
+        "allocated"
+      ],
+      "allocation": {
+        "task_id": "task-a",
+        "user": "alice",
+        "uid": 1000,
+        "started_at": "2026-11-05T09:47:20Z",
+        "elapsed_seconds": 760
+      },
+      "reservation": null,
+      "health": "unknown"
+    },
+    {
+      "id": "4",
+      "group_id": "g1",
+      "pool_eligible": true,
+      "state": "free",
+      "reason_codes": [],
+      "allocation": null,
+      "reservation": null,
+      "health": "unknown"
+    },
+    {
+      "id": "5",
+      "group_id": "g1",
+      "pool_eligible": true,
+      "state": "allocated",
+      "reason_codes": [
+        "allocated",
+        "reservation_pool"
+      ],
+      "allocation": {
+        "task_id": "task-b",
+        "user": "bob",
+        "uid": 1001,
+        "started_at": "2026-11-05T09:56:48Z",
+        "elapsed_seconds": 192
+      },
+      "reservation": {
+        "task_id": "task-c",
+        "user": "carol",
+        "uid": 1002,
+        "requested_devices": 2
+      },
+      "health": "unknown"
+    },
+    {
+      "id": "6",
+      "group_id": "g1",
+      "pool_eligible": true,
+      "state": "reserved",
+      "reason_codes": [
+        "reservation_pool"
+      ],
+      "allocation": null,
+      "reservation": {
+        "task_id": "task-c",
+        "user": "carol",
+        "uid": 1002,
+        "requested_devices": 2
+      },
+      "health": "unknown"
+    },
+    {
+      "id": "7",
+      "group_id": "g1",
+      "pool_eligible": false,
+      "state": "disabled",
+      "reason_codes": [
+        "outside_auto_pool"
+      ],
+      "allocation": null,
+      "reservation": null,
+      "health": "unknown"
+    }
+  ],
+  "inventory_complete": true
+}

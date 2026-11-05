@@ -15,6 +15,7 @@ std::optional<double> cpu_usage(CpuTimes before, CpuTimes after);
 Json parse_process(std::string_view stat, std::uint64_t page_size);
 
 class Filesystems;
+class Resources;
 class Linux {
 	std::filesystem::path proc_, sys_;
 	std::map<std::string, CpuTimes> cpus_;
@@ -23,6 +24,7 @@ class Linux {
 	struct Process { std::uint64_t start, ticks, time; };
 	std::map<int, Process> processes_;
 	std::unique_ptr<Filesystems> filesystems_;
+	std::unique_ptr<Resources> resources_;
 	std::uint64_t last_ = 0, ticks_, page_size_;
 	std::string model_;
 	std::map<unsigned, std::string> users_;

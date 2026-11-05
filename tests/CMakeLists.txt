@@ -30,7 +30,7 @@ if(BTOP_CLUSTER)
 endif()
 
 if(BTOP_CLUSTER)
-  add_executable(cluster_collection_test cluster_collection.cpp)
+  add_executable(cluster_collection_test cluster_collection.cpp cluster_resources.cpp)
   target_link_libraries(cluster_collection_test PRIVATE cluster_collector GTest::gtest_main)
   gtest_discover_tests(cluster_collection_test)
   add_test(NAME cluster_live COMMAND ${Python3_EXECUTABLE}

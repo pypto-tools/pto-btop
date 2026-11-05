@@ -10,9 +10,9 @@ verifies HTTPS certificates and uses separate agent and viewer credentials.
 
 ![Terminal detail view with simulated data](docs/cluster/detail-preview.png)
 
-**Status:** `0.4.0-alpha.3` preview. Local Linux ARM64 collection, three-agent
-HTTPS tests and three independent terminal sessions have been tested. Real
-three-machine deployment remains pending. Check the [amd64 / arm64 build results](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)
+**Status:** `0.5.0-alpha.1` preview, with deduplicated login counts and task-submit
+card allocation monitoring. Local Linux ARM64 collection, three-agent HTTPS tests
+and independent terminal sessions are covered. Check the [amd64 / arm64 build results](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)
 for CI validation and [Releases](https://github.com/pypto-tools/pto-btop/releases)
 for published packages; a version in the source tree is not a published release.
 
@@ -32,9 +32,9 @@ Release builds bundle the GCC C++ runtime. These are not musl/Alpine packages.
 After downloading a package and its `.sha256` file:
 
 ```bash
-sha256sum --check pto-btop-0.4.0-alpha.3-linux-arm64.tar.gz.sha256
-tar -xzf pto-btop-0.4.0-alpha.3-linux-arm64.tar.gz
-cd pto-btop-0.4.0-alpha.3-linux-arm64
+sha256sum --check pto-btop-0.5.0-alpha.1-linux-arm64.tar.gz.sha256
+tar -xzf pto-btop-0.5.0-alpha.1-linux-arm64.tar.gz
+cd pto-btop-0.5.0-alpha.1-linux-arm64
 python3 install.py --check
 python3 install.py --root "$HOME/.local/share/pto-btop" --bin-dir "$HOME/.local/bin"
 "$HOME/.local/bin/pto-btop" --local --detail
@@ -48,7 +48,7 @@ and state; [installation and release guide](docs/cluster/release.md) has details
 
 If you already have a private node enrollment bundle (`node.json` and `node/`),
 download the release
-[`setup.py`](https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.3/setup.py)
+[`setup.py`](https://github.com/pypto-tools/pto-btop/releases/download/v0.5.0-alpha.1/setup.py)
 and its `.sha256` file into that directory. Verify the checksum, then run
 `python3 setup.py --proxy http://127.0.0.1:7892` to install and start the agent.
 `--check` only validates and does **not** install. See the
@@ -84,6 +84,25 @@ hosts. `pto-btop --demo --detail` shows simulated data without a server.
 
 The original executable names `btop-cluster`, `btop-agent` and `btop-server` remain
 inside the package for compatibility. Public command names use the `pto-` prefix.
+
+## Login and card resources
+
+The overview includes available cards, running/pending tasks and unique login
+accounts / sessions. Details keep CPU, memory, disks and network, and place a
+card table above processes. Press `u` for login accounts, `v` to focus cards,
+arrows to select a card, Enter for allocation/reservation details, `f` to filter
+processes by the selected owner's exact UID, and `o` to fold the card table.
+Manual `user:TEXT` filters remain case-insensitive substrings; `uid:1000` is exact.
+
+Agents read Linux utmpx login records and query
+`/usr/local/bin/task-submit --monitor --json` locally. Missing/unreadable sources
+show unavailable, not zero; stale or maintenance snapshots never advertise free
+cards. Card availability reflects the queue, not hardware health or a guarantee
+that a new task can start. See [resource monitoring](docs/cluster/resources-monitoring.md).
+
+Upgrade and restart the hub first, then each agent and viewer. New agents fall
+back to five metric groups on older hubs; old agents continue working on new hubs
+without the resource panels. Enrollment configuration does not change.
 
 ## Build and test
 

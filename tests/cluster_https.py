@@ -2,6 +2,8 @@
 """Real loopback HTTPS hub, three agents and three independent terminal viewers."""
 import copy
 import http.client
+import http.server
+import threading
 import json
 import os
 from pathlib import Path
@@ -128,6 +130,26 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         denied["session_id"] = "old-session"
         denied["seq"] = 3
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], denied, expected=409)
+        assert set(registration["metric_groups"]) == {"cards", "sessions"}
+        cards = json.loads((Path(initializer).parents[1] / "docs/cluster/examples/task-submit-monitor.example.json").read_text())
+        body["seq"] = 3
+        body["groups"]["cards"] = group(cards)
+        body["groups"]["sessions"] = group({"source": "utmpx", "users": 1, "sessions": 2, "age_ms": 0,
+                                           "items": [{"user": "alice", "sessions": 2, "first_login_at": 1000}]})
+        api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], body)
+        stored = api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["snapshot"]["groups"]
+        assert stored["cards"]["data"]["devices"] == cards["devices"]
+        for case in ("counts", "duplicate-login", "unknown-group"):
+            bad = copy.deepcopy(body)
+            bad["seq"] = 4
+            if case == "counts":
+                bad["groups"]["cards"]["data"]["summary"]["free"] += 1
+            elif case == "duplicate-login":
+                bad["groups"]["sessions"]["data"]["items"] *= 2
+            else:
+                bad["groups"]["unexpected"] = group({})
+            api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], bad, expected=400)
+            assert api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["seq"] == 3
         print("HTTPS authentication, host ACLs, atomic snapshots and sequence checks: PASS", flush=True)
 
         # Certificate trust and hostname verification must remain enabled in the C++ client.
@@ -148,6 +170,51 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
             assert result.returncode != 0 and b"SSL" in result.stderr, (case, result.stderr)
         print("Wrong CA and wrong server name rejected: PASS", flush=True)
 
+        # An old hub does not advertise optional metric groups and rejects extras.
+        legacy_snapshots = []
+        class LegacyHub(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                code = 200
+                if self.path.endswith("snapshots"):
+                    legacy_snapshots.append(payload)
+                    if set(payload["groups"]) != {"cpu", "memory", "filesystems", "disks", "network"}:
+                        code = 400
+                response = json.dumps({"session_id": "legacy-session", "requests": {}}).encode()
+                self.send_response(code)
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+        legacy = http.server.HTTPServer(("127.0.0.1", 0), LegacyHub)
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(bundle / "server/cert.pem", bundle / "server/key.pem")
+        legacy.socket = tls.wrap_socket(legacy.socket, server_side=True)
+        thread = threading.Thread(target=legacy.serve_forever, daemon=True)
+        thread.start()
+        config = json.loads((bundle / "nodes/a/agent.json").read_text())
+        config.update(server=f"https://127.0.0.1:{legacy.server_port}", ca_file=str(bundle / "ca.pem"),
+                      token_file=str(bundle / "nodes/a/agent.token"), interval_ms=1000)
+        legacy_config = root / "legacy-agent.json"
+        legacy_config.write_text(json.dumps(config))
+        legacy_agent = launch([agent_binary, "--config", str(legacy_config)], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+        try:
+            until(lambda: len(legacy_snapshots) >= 2, 10)
+            assert legacy_agent.poll() is None
+            assert all(set(item["groups"]) == {"cpu", "memory", "filesystems", "disks", "network"}
+                       for item in legacy_snapshots)
+        finally:
+            legacy_agent.terminate()
+            legacy_agent.wait(timeout=5)
+            legacy.shutdown()
+            legacy.server_close()
+            thread.join(timeout=2)
+        print("New agent / legacy hub feature negotiation: PASS", flush=True)
+
         agents = []
         for host in ("a", "b", "c"):
             path = bundle / f"nodes/{host}/agent.json"
@@ -158,6 +225,10 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
             agents.append(launch([agent_binary, "--config", str(path)], stdout=log, stderr=log))
         until(lambda: all(api("GET", f"/api/v1/hosts/{host}/snapshot", tokens["a", "viewer"])["seq"] >= 2
                           for host in ("a", "b", "c")), 12)
+
+        for host in ("a", "b", "c"):
+            groups = api("GET", f"/api/v1/hosts/{host}/snapshot", tokens["a", "viewer"])["snapshot"]["groups"]
+            assert "cards" in groups and "sessions" in groups
 
         views = []
         for user, query in (("a", subscription("btop-agent", "rss")), ("b", subscription("no-such-process"))):
@@ -188,6 +259,11 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
              "subscription": subscription("user:")})
         until(lambda: result_view(*views[0])["status"] != "warming_up", 10)
         assert result_view(*views[0])["data"]["items"] == []
+        api("POST", "/api/v1/views", tokens["a", "viewer"], {"id": views[0][1]["id"], "host_id": "a",
+             "subscription": subscription("uid:" + str(selected["uid"]))})
+        until(lambda: bool(result_view(*views[0])["data"].get("items")), 10)
+        assert all(row["uid"] == selected["uid"] for row in result_view(*views[0])["data"]["items"])
+        assert result_view(*views[1])["data"]["items"] == []
         api("POST", "/api/v1/views", tokens["b", "viewer"], {"id": views[1][1]["id"], "host_id": "a",
              "subscription": subscription("no-such-process", selected=selected)})
         until(lambda: (result_view(*views[1])["data"].get("selected") or {}).get("pid") == selected["pid"], 10)

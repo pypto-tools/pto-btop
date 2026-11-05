@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 					"  --local            Collect this machine through a local agent\n"
 					"  --ssh ALIAS        Collect over SSH (repeat up to 4 times)\n"
 					"  --agent-path PATH  Override the local or remote agent executable\n"
-					"  --detail           Start with cpu/mem/disks/net/proc details\n"
+					"  --detail           Start with cpu/mem/disks/net/cards/proc details\n"
 					"  --once             Print one ANSI frame (live mode waits for two samples)\n"
 					"  --width N --height N  Frame dimensions for --once (default 120x36)\n"
 					"  --theme Default|TTY|PATH  Original btop theme file\n"
@@ -215,7 +215,7 @@ int main(int argc, char** argv) {
 				std::ostringstream frame;
 				frame << Cluster::render(hosts, width, height, selected, detail, style);
 				if (help and width>=80 and height>=24) {
-					const int x=4,y=5,w=std::min(width-8,100),h=16;
+					const int x=4,y=3,w=std::min(width-8,100),h=19;
 					frame << Draw::createBox(x,y,w,h,Theme::c("hi_fg"),true,"Keys","? / Esc close",0,style);
 					int row=y+1;
 					for (const auto& text : {"Tab / 1-4: switch host    Esc: overview    q: quit",
@@ -223,7 +223,9 @@ int main(int argc, char** argv) {
 						"Enter: toggle selected process details (PID + start time)",
 						"c / m: CPU / memory sort   s: cycle sort   R: reverse",
 						"T: tree of returned processes   Space: collapse / expand",
-						"/: name or user:TEXT substring   Enter: apply   Esc: cancel",
+						"/: name / user:TEXT substring / uid:NUMBER exact",
+						"v: cards/proc focus   o: fold cards   f: owner processes",
+						"u: logged-in users   Enter: focused item details",
 						"[ / ]: core pages   g: total / user / system / iowait",
 						"d: next disk page   i: disk capacity / I/O graphs",
 						"b / n: previous / next interface   a: auto / 10MiB/s scale",
@@ -260,13 +262,35 @@ int main(int argc, char** argv) {
 				hosts[selected].proc_page=0; dirty=true; continue;
 			}
 			if (key == 'q') break;
+			if (hosts[selected].users_open) {
+				if (key=='u' or input_key=="escape") hosts[selected].users_open=false;
+				else if (input_key=="pagedown" or input_key=="down" or key=='j') ++hosts[selected].users_page;
+				else if (input_key=="pageup" or input_key=="up" or key=='k') hosts[selected].users_page=std::max(0,hosts[selected].users_page-1);
+				dirty=true; continue;
+			}
+			if (key=='u') { hosts[selected].users_open=true; hosts[selected].users_page=0; dirty=true; continue; }
+			if (detail and key=='v') { hosts[selected].cards_focus=not hosts[selected].cards_focus; if (hosts[selected].cards_focus) { hosts[selected].cards_folded=false; hosts[selected].proc_detail=false; } dirty=true; continue; }
+			if (detail and key=='o') { hosts[selected].cards_folded=not hosts[selected].cards_folded; if (hosts[selected].cards_folded) hosts[selected].cards_focus=false; dirty=true; continue; }
+			if (detail and hosts[selected].cards_focus) {
+				if (key=='f') { Cluster::filter_card_owner(hosts[selected]); dirty=true; continue; }
+				if (key=='\r' or key=='\n') { hosts[selected].card_detail=not hosts[selected].card_detail; dirty=true; continue; }
+				if (input_key=="escape" and hosts[selected].card_detail) { hosts[selected].card_detail=false; dirty=true; continue; }
+				int delta=0;
+				if (key=='j' or input_key=="down") delta=1;
+				else if (key=='k' or input_key=="up") delta=-1;
+				else if (input_key=="pagedown") delta=8;
+				else if (input_key=="pageup") delta=-8;
+				else if (input_key=="home") delta=-10000;
+				else if (input_key=="end") delta=10000;
+				if (delta) { Cluster::move_card(hosts[selected],delta); dirty=true; continue; }
+			}
 			if (key == '\t') selected = (selected + 1) % hosts.size();
 			else if (key == '\r' or key == '\n') { if (detail) hosts[selected].proc_detail=not hosts[selected].proc_detail; else detail=true; }
 			else if (input_key=="escape") { if (hosts[selected].proc_detail) hosts[selected].proc_detail=false; else detail=false; }
 			else if (key >= '1' and key < '1'+int(hosts.size())) { selected = key - '1'; detail = true; }
 			else if (detail and key=='c') hosts[selected].sort="cpu";
 			else if (detail and key=='m') hosts[selected].sort="rss";
-			else if (detail and key=='/') { editing_filter=true; filter_draft=hosts[selected].filter; }
+			else if (detail and key=='/') { hosts[selected].cards_focus=false; editing_filter=true; filter_draft=hosts[selected].filter; }
 			else if (detail and (key=='j' or input_key=="down")) Cluster::move_process(hosts[selected],1);
 			else if (detail and (key=='k' or input_key=="up")) Cluster::move_process(hosts[selected],-1);
 			else if (detail and input_key=="pagedown") Cluster::move_process(hosts[selected],10);

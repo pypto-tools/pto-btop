@@ -2,16 +2,16 @@
 
 > 发布准备：对外命令与安装升级流程见 [发布说明](release.md)，项目首页见 [README](../../README.md)。以下保留从四机 SSH 原型到三机 HTTPS 接入的设计过程。
 
-> 2026-11-05：0.4.0 已实现三机 HTTPS 集中接入，每机 agent 上报、中心缓存、各机 TUI 独立查看。启动和配置见 [HTTPS 使用说明](https.md)，架构见 [接入设计](centralized-https.md)。本机／SSH 模式继续保留；真实三机部署尚待确认目标和架构。
-
-目标是在一个终端中同时观察通过 NetBird 互联的 4 台开发机，直接复用 btop 的主题、字符曲线、进度条和边框，并提供单机详情。采用基于 btop 源码的独立衍生项目，新增终端客户端和无界面采集程序。
-
-当前已实现真实 Linux 采集器、`btop-agent --stdio`、本机及最多四路 SSH 接入；详情包含 cpu、mem、disks、net、proc 五个区域，采用原版布局、分类／逐核历史、多盘 I/O、上下行大图、进程选择／树视图／独立详情。运行方式见[使用说明](prototype.md)，本机可直接执行 `./build/cluster/btop-cluster --local --detail`。24 项测试通过，包含真实 HTTPS 三 agent／三 PTY 本机集成；`--config` 已用于 HTTPS。真实三机部署与长期验收尚待完成。
+从 `0.5.0-alpha.1` 起，监控包含 Linux 基础负载、登录账号／会话数和 task-submit
+卡分配状态。支持最多四台主机，每个终端独立选择和筛选；详情保留 btop 的
+CPU、MEM、DISKS、NET、PROC，并在 PROC 上方展示 CARDS。
 
 ## 阅读顺序
 
 | 文件 | 内容 |
 | --- | --- |
+| [登录人数与卡资源](resources-monitoring.md) | 总览／详情样图、在线用户口径、卡状态展示及接入顺序 |
+| [task-submit 查询接口](task-submit-monitor-api.md) | 本地只读 JSON 查询需求与示例 |
 | [使用说明](prototype.md) | 已实现功能、运行命令、构建和验证结果 |
 | [设计方案](design.md) | 范围、架构、状态隔离、四机界面、技术选择 |
 | [通信协议](protocol.md) | SSH 数据通道、消息、指标语义、重连和资源限制 |

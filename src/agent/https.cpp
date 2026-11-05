@@ -3,6 +3,7 @@
 #include "net/common.hpp"
 #include "collector/linux.hpp"
 #include <iostream>
+#include <algorithm>
 #include <thread>
 
 int run_https_agent(const std::string& path,volatile std::sig_atomic_t& stopped) {
@@ -15,6 +16,7 @@ int run_https_agent(const std::string& path,volatile std::sig_atomic_t& stopped)
 	options=Protocol::subscription(encoded);
 	const auto instance=Net::random_id(); const auto hello=collector.hello(instance);
 	std::string session; std::uint64_t seq=0;
+	bool resources_supported=false;
 	std::map<std::string,Protocol::Subscription> requests;
 	int failures=0;
 	auto work=[&](const Net::Json& response) {
@@ -33,8 +35,11 @@ int run_https_agent(const std::string& path,volatile std::sig_atomic_t& stopped)
 			if (session.empty()) {
 				const auto reply=http.request("POST","/api/v1/agent/session",{{"instance_id",instance},{"hello",hello}});
 				session=reply.at("session_id").get<std::string>(); work(reply);
+				const auto supported=reply.value("metric_groups",Net::Json::array());
+				resources_supported=supported.is_array() and std::find(supported.begin(),supported.end(),"cards")!=supported.end() and std::find(supported.begin(),supported.end(),"sessions")!=supported.end();
 			}
 			auto body=collector.sample_batch(options,requests);
+			if (not resources_supported) { body["groups"].erase("sessions"); body["groups"].erase("cards"); }
 			body["session_id"]=session; body["seq"]=++seq;
 			body["wall_time"]=Protocol::utc_now(); body["interval_ms"]=options.interval_ms;
 			work(http.request("POST","/api/v1/agent/snapshots",body));

@@ -24,7 +24,7 @@ std::string utc_now() {
 	return output;
 }
 
-Json parse(std::string_view line) {
+Json document(std::string_view line) {
 	if (line.size() > max_frame) throw std::runtime_error("Frame exceeds 1 MiB");
 	std::vector<std::set<std::string>> keys;
 	auto result = Json::parse(line, [&](int depth, Json::parse_event_t event, Json& value) {
@@ -37,6 +37,11 @@ Json parse(std::string_view line) {
 			throw std::runtime_error("Duplicate JSON key");
 		return true;
 	});
+	return result;
+}
+
+Json parse(std::string_view line) {
+	auto result=document(line);
 	if (not result.is_object() or not result.contains("version") or
 		not result["version"].is_number_integer() or result["version"] != 1 or
 		not result.contains("type") or not result["type"].is_string())

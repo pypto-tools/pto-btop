@@ -1,18 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise the prototype through a PTY and check real ANSI frame geometry."""
 
-import fcntl
 import os
-import re
-import select
 import signal
-import struct
 import subprocess
 import sys
 import tempfile
 import termios
 import time
-import unicodedata
 
 
 from terminal_support import Screen, screen, resize, read_until
@@ -83,6 +78,37 @@ for ending in ("q", signal.SIGINT, signal.SIGTERM):
         os.close(master)
         os.close(slave)
 
+# Card focus, exact owner filter, login overlay and narrow-terminal paging.
+master, slave = os.openpty()
+resize(slave, 160, 48)
+proc = subprocess.Popen([binary, "--demo", "--detail"], stdin=slave, stdout=slave,
+                        stderr=slave, start_new_session=True)
+try:
+    view = Screen(160, 48)
+    view.wait_text(master, "cards | queue")
+    os.write(master, b"u")
+    view.wait_text(master, "SINCE (UTC)")
+    os.write(master, b"uvjj\r")
+    view.wait_text(master, "Task: task-")
+    os.write(master, b"f")
+    view.wait_text(master, "/uid:1000")
+    os.write(master, b"v")
+    view.wait_text(master, "cards [focus]")
+    resize(slave, 80, 24)
+    assert "cards [focus]" in view.resize_when_cleared(master, 80, 24)
+    os.write(master, b"\x1b[F")
+    view.wait_text(master, "8/8")
+    os.write(master, b"o")
+    view.wait_text(master, "proc")
+    os.write(master, b"q")
+    assert proc.wait(timeout=5) == 0
+finally:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+    os.close(master)
+    os.close(slave)
+
 if len(sys.argv) > 2:
     with tempfile.TemporaryDirectory(prefix="btop-terminal-") as temporary:
         config = os.path.join(temporary, "btop.conf")
@@ -138,7 +164,9 @@ try:
     assert ending.rfind(b"\x1b[?2026l") > ending.rfind(b"\x1b[?2026h")
 finally:
     if proc.poll() is None:
-        proc.kill(); proc.wait()
-    os.close(master); os.close(slave)
+        proc.kill()
+        proc.wait()
+    os.close(master)
+    os.close(slave)
 
 print("ANSI geometry, differential refresh, input, resize, color modes, legacy startup and terminal restoration: PASS")

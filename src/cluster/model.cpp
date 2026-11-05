@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "view.hpp"
+#include "protocol/resources.hpp"
+#include <fmt/format.h>
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -34,6 +36,75 @@ void append(std::deque<long long>& history, double value, double maximum = 1e18)
 	while (history.size() > 300) history.pop_front();
 }
 }
+namespace {
+std::string count_text(const Json& value, const char* key) {
+	const auto found=value.find(key);
+	return found!=value.end() and found->is_number_integer() ? std::to_string(found->get<std::uint64_t>()) : "N/A";
+}
+}
+std::string resource_status(const Host& host,const std::string& name) {
+	if (host.status!="ONLINE") return host.status;
+	const auto found=host.groups.find(name);
+	if (found==host.groups.end()) return "N/A";
+	const auto status=found->value("status",std::string{"unavailable"});
+	const auto& data=metric_data(host,name);
+	if (data.empty()) return status=="warming_up" ? "warming_up" : status;
+	const auto age=number(data,"age_ms");
+	const auto now=Protocol::now_ms();
+	const auto elapsed=host.simulated or now<host.received_ms ? 0 : now-host.received_ms;
+	if (age<0 or age+elapsed>15000 or data.value("cached",false)) return "STALE";
+	if (status!="ok" and status!="partial") return status;
+	if (name=="cards") {
+		if (data.at("status")=="unavailable") return "unavailable";
+		if (not data.at("inventory_complete").get<bool>()) return "UNKNOWN";
+		const auto state=data.at("scheduler").at("state").get<std::string>();
+		if (state!="running") return state=="maintenance" ? "MAINTENANCE" : state=="stopped" ? "STOPPED" : "UNKNOWN";
+	}
+	return status;
+}
+std::string card_summary(const Host& host,bool compact) {
+	const auto state=resource_status(host,"cards");
+	if (state!="ok" and state!="partial") return compact ? "--" : "NPU "+state;
+	const auto& counts=metric_data(host,"cards").at("summary");
+	const auto free=count_text(counts,"free"), total=count_text(counts,"total");
+	if (compact) return free+"/"+total;
+	return "NPU free "+free+"/"+total+" held "+count_text(counts,"allocated")+" res "+count_text(counts,"reserved")+" off "+count_text(counts,"disabled")+(state=="partial" ? " [partial]" : "");
+}
+std::string queue_summary(const Host& host) {
+	const auto state=resource_status(host,"cards");
+	if (state!="ok" and state!="partial") return "TASKS "+state;
+	const auto& queue=metric_data(host,"cards").at("scheduler");
+	return "TASKS run "+count_text(queue,"running_tasks")+"/"+count_text(queue,"max_concurrent")+" / wait "+count_text(queue,"pending_tasks")+" / owners "+count_text(metric_data(host,"cards").at("summary"),"occupying_users")+(queue.at("dispatching")==false ? " [paused]" : "");
+}
+std::string session_summary(const Host& host,bool compact) {
+	const auto state=resource_status(host,"sessions");
+	if (state!="ok" and state!="partial") return compact ? "--/--" : "users "+state;
+	const auto& sessions=metric_data(host,"sessions");
+	const auto suffix=state=="partial" ? " [partial]" : "";
+	return compact ? count_text(sessions,"users")+"/"+count_text(sessions,"sessions") : "users "+count_text(sessions,"users")+" / sessions "+count_text(sessions,"sessions")+suffix;
+}
+void move_card(Host& host,int delta) {
+	const auto& items=metric_items(metric_data(host,"cards"),"devices");
+	if (items.empty()) { host.selected_card.clear(); return; }
+	int selected=0;
+	for (std::size_t i=0; i<items.size(); ++i) if (items[i].at("id")==host.selected_card) selected=i;
+	selected=std::clamp(selected+delta,0,int(items.size())-1);
+	host.selected_card=items[selected].at("id").get<std::string>();
+}
+bool filter_card_owner(Host& host) {
+	const auto state=resource_status(host,"cards");
+	if (state!="ok" and state!="partial") return false;
+	for (const auto& card : metric_items(metric_data(host,"cards"),"devices")) {
+		if (card.at("id")!=host.selected_card or card.at("state")!="allocated") continue;
+		const auto& allocation=card.at("allocation");
+		if (not allocation.is_object() or not allocation.at("uid").is_number_integer()) return false;
+		host.filter="uid:"+std::to_string(allocation.at("uid").get<std::uint32_t>());
+		host.cards_focus=false; host.proc_detail=false; host.proc_page=0;
+		return true;
+	}
+	return false;
+}
+
 std::vector<ProcessRow> process_rows(const Host& host) {
 	const auto& items = metric_items(metric_data(host,"processes"));
 	std::vector<std::size_t> order(items.size());
@@ -115,10 +186,12 @@ void ingest(Host& host, const Json& snapshot) {
 	const auto& groups=snapshot.at("groups");
 	if (not groups.is_object()) throw std::runtime_error("Invalid metric groups");
 	for (const auto& [name,group] : groups.items()) {
+		if (name=="sessions" or name=="cards") Protocol::validate_resource_group(name,group);
 		if (not group.is_object() or not group.contains("data") or not group.contains("status") or not group["status"].is_string()) throw std::runtime_error("Invalid metric group");
 		if (metric_items(group["data"]).size()>2048) throw std::runtime_error("Too many metric items");
 	}
 	host.groups=groups;
+	move_card(host,0);
 	const auto& cpu=metric_data(host,"cpu"); const auto& mem=metric_data(host,"memory");
 	const auto usage=number(cpu,"usage_pct");
 	host.cpu_valid=usage>=0 and usage<=100; host.cpu=host.cpu_valid ? usage : 0;
