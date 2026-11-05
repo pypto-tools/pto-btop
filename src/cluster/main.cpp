@@ -223,7 +223,7 @@ int main(int argc, char** argv) {
 						"Enter: toggle selected process details (PID + start time)",
 						"c / m: CPU / memory sort   s: cycle sort   R: reverse",
 						"T: tree of returned processes   Space: collapse / expand",
-						"/: filter process name   Enter: apply   Esc: cancel",
+						"/: name or user:TEXT substring   Enter: apply   Esc: cancel",
 						"[ / ]: core pages   g: total / user / system / iowait",
 						"d: next disk page   i: disk capacity / I/O graphs",
 						"b / n: previous / next interface   a: auto / 10MiB/s scale",
@@ -234,7 +234,7 @@ int main(int argc, char** argv) {
 						frame << Mv::to(row++,x+1) << Theme::c("main_fg") << Cluster::safe_text(text,w-2);
 				}
 				if (editing_filter and width>=80 and height>=24)
-					frame << "\x1b[" << height-1 << ";2H" << std::string(width-3,' ') << "\x1b[" << height-1 << ";2HFilter: " << Cluster::safe_text(filter_draft,width-12);
+					frame << "\x1b[" << height-1 << ";2H" << std::string(width-3,' ') << "\x1b[" << height-1 << ";2HFilter (name / user:TEXT): " << Cluster::safe_text(filter_draft,width-29);
 				terminal.present(frame.str(),width,height);
 				dirty = false;
 			}

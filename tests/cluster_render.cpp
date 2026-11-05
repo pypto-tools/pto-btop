@@ -7,6 +7,21 @@
 #include "btop_theme.hpp"
 #include "btop_tools.hpp"
 
+TEST(cluster_state, demo_user_filters_are_partial_and_independent_per_host) {
+	auto hosts=Cluster::demo_hosts();
+	hosts[0].filter="user:VELO";
+	hosts[1].filter="user:nobody";
+	hosts[2].filter="PyThOn";
+	Cluster::advance_demo(hosts,301);
+	EXPECT_EQ(Cluster::metric_data(hosts[0],"processes")["matched"],40);
+	EXPECT_TRUE(Cluster::metric_items(Cluster::metric_data(hosts[1],"processes")).empty());
+	EXPECT_EQ(Cluster::metric_data(hosts[2],"processes")["matched"],20);
+	EXPECT_EQ(Cluster::metric_data(hosts[3],"processes")["matched"],40);
+	hosts[1].filter="";
+	Cluster::advance_demo(hosts,302);
+	EXPECT_EQ(Cluster::metric_data(hosts[1],"processes")["matched"],40);
+}
+
 TEST(cluster_render, remote_names_cannot_control_terminal_or_exceed_width) {
 	const std::string previous = std::setlocale(LC_CTYPE, nullptr);
 	ASSERT_NE(std::setlocale(LC_CTYPE, "C.UTF-8"), nullptr);

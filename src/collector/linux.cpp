@@ -5,6 +5,7 @@
 #include "cluster_version.hpp"
 #include "linux.hpp"
 #include "filesystems.hpp"
+#include "protocol/process_filter.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -49,10 +50,6 @@ std::string short_file(const std::filesystem::path& path, std::size_t limit) {
 	return value;
 }
 Json number(std::optional<double> value) { return value ? Json(*value) : Json(nullptr); }
-std::string lowercase(std::string value) {
-	for (auto& c : value) c = std::tolower(static_cast<unsigned char>(c));
-	return value;
-}
 Json rate(std::uint64_t value, std::uint64_t previous, std::uint64_t elapsed) {
 	if (elapsed == 0 or value < previous) return nullptr;
 	return 1000.0 * (value - previous) / elapsed;
@@ -368,9 +365,9 @@ Json Linux::processes_many(const std::map<std::string, Protocol::Subscription>& 
 	std::map<int,std::string> commands;
 	for (const auto& [id,options] : requests) {
 		std::vector<std::size_t> order;
-		const auto filter=lowercase(options.filter);
+		const Protocol::ProcessFilter filter(options.filter);
 		for (std::size_t i=0; i<items.size(); ++i)
-			if (filter.empty() or lowercase(items[i]["name"].get<std::string>()).find(filter)!=std::string::npos) order.push_back(i);
+			if (filter.matches(items[i])) order.push_back(i);
 		std::ranges::sort(order,[&](std::size_t ai,std::size_t bi) {
 			const auto& a=items[ai]; const auto& b=items[bi];
 			const auto field=options.sort=="rss" ? "rss_bytes" : options.sort=="cpu" ? "cpu_pct" : options.sort;

@@ -2,7 +2,7 @@
 
 项目对外名称为 `pto-btop`，本地源码目录仍可保留 `ci-tools/btop-cluster`。
 独立仓库为 [pypto-tools/pto-btop](https://github.com/pypto-tools/pto-btop)，
-兼容性预发布版本为 `v0.4.0-alpha.2`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
+当前预发布版本为 `v0.4.0-alpha.3`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
 已发布安装包以 [Releases](https://github.com/pypto-tools/pto-btop/releases) 为准。
 
 ## 包与兼容性
@@ -69,9 +69,9 @@ pto-btop/
 
 ```bash
 curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
-  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.2/setup.py
+  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.3/setup.py
 curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
-  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.2/setup.py.sha256
+  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.3/setup.py.sha256
 sha256sum --check setup.py.sha256
 HTTPS_PROXY=http://127.0.0.1:7892 \
   uv run --no-project --python 3.12 setup.py --proxy http://127.0.0.1:7892
@@ -94,6 +94,19 @@ uv 的安装说明见 [官方文档](https://docs.astral.sh/uv/getting-started/i
 
 已有服务升级后仍需显式重启才能载入新程序；配置和日志保留。新安装优先使用
 当前账号可用的 user systemd，否则在后台启动；开机自启取决于服务管理器配置。
+
+更新已有节点以启用新采集能力时，在原配置目录下载新版 `setup.py` 后运行：
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7892 \
+  uv run --no-project --python 3.12 setup.py \
+  --proxy http://127.0.0.1:7892 --restart-agent
+```
+
+`--restart-agent` 仅重启该节点的采集器。用户 systemd 服务通过服务管理器重启；
+后台进程须匹配记录的启动命令，并使用 Linux pidfd 将停止信号绑定到正确的进程，
+拒绝停止复用该 PID 的其他命令。不支持 pidfd 的系统需自行通过服务管理器停止
+采集器后再运行安装入口。该参数不能与 `--check` 或 `--install-only` 同用。
 
 ## 配置与服务
 

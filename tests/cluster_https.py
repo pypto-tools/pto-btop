@@ -171,6 +171,23 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         assert first["items"] and all("btop-agent" in row["name"] for row in first["items"])
         assert second["items"] == []
         selected = first["items"][0]
+        # User selectors are executed by the real agent, independently per viewer.
+        owner = selected["user"]
+        owner_part = owner[1:] if len(owner) > 1 else owner
+        api("POST", "/api/v1/views", tokens["a", "viewer"], {"id": views[0][1]["id"], "host_id": "a",
+             "subscription": subscription("user:" + owner_part.upper())})
+        until(lambda: bool(result_view(*views[0])["data"].get("items")), 10)
+        owned = result_view(*views[0])["data"]["items"]
+        assert owned and all(owner_part.lower() in row["user"].lower() for row in owned)
+        assert result_view(*views[1])["data"]["items"] == []
+        api("POST", "/api/v1/views", tokens["a", "viewer"], {"id": views[0][1]["id"], "host_id": "a",
+             "subscription": subscription("user:" + owner + "-no-such-account")})
+        until(lambda: result_view(*views[0])["status"] != "warming_up", 10)
+        assert result_view(*views[0])["data"]["items"] == []
+        api("POST", "/api/v1/views", tokens["a", "viewer"], {"id": views[0][1]["id"], "host_id": "a",
+             "subscription": subscription("user:")})
+        until(lambda: result_view(*views[0])["status"] != "warming_up", 10)
+        assert result_view(*views[0])["data"]["items"] == []
         api("POST", "/api/v1/views", tokens["b", "viewer"], {"id": views[1][1]["id"], "host_id": "a",
              "subscription": subscription("no-such-process", selected=selected)})
         until(lambda: (result_view(*views[1])["data"].get("selected") or {}).get("pid") == selected["pid"], 10)
@@ -178,7 +195,7 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         api("DELETE", "/api/v1/views/" + views[1][1]["id"], tokens["a", "viewer"], expected=403)
         for user, view in views:
             api("DELETE", "/api/v1/views/" + view["id"], tokens[user, "viewer"])
-        print("Independent filters/sorts, selected PID outside filter, view ownership: PASS", flush=True)
+        print("Independent name/user filters, sorts, selected PID outside filter, view ownership: PASS", flush=True)
 
         # Terminal read paths operate concurrently and remain responsive during hub failure.
         for index, host in enumerate(("a", "b", "c")):

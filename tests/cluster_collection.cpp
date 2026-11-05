@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include "collector/linux.hpp"
 #include "protocol/protocol.hpp"
+#include "protocol/process_filter.hpp"
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
@@ -34,6 +35,52 @@ struct Fixture {
 		return out+'\n';
 	}
 };
+}
+
+TEST(protocol, user_filter_matches_owner_substrings_and_preserves_name_search) {
+	const Json process{{"name","python3"},{"user","ci-runner"},{"uid",1001},{"command","python3 train.py"}};
+	EXPECT_TRUE(Protocol::ProcessFilter("").matches(process));
+	EXPECT_TRUE(Protocol::ProcessFilter("PyThOn").matches(process));
+	EXPECT_TRUE(Protocol::ProcessFilter("user:ci-runner").matches(process));
+	EXPECT_TRUE(Protocol::ProcessFilter("user:ci").matches(process));
+	EXPECT_TRUE(Protocol::ProcessFilter("user:runner").matches(process));
+	EXPECT_FALSE(Protocol::ProcessFilter("user:ci-runner-other").matches(process));
+	EXPECT_TRUE(Protocol::ProcessFilter("user:CI-RUNNER").matches(process));
+	EXPECT_FALSE(Protocol::ProcessFilter("user:").matches(process));
+	EXPECT_FALSE(Protocol::ProcessFilter("ci-runner").matches(process));
+	EXPECT_FALSE(Protocol::ProcessFilter("train.py").matches(process));
+	EXPECT_FALSE(Protocol::ProcessFilter("user:ci-runner").matches(Json{{"name","ci-runner"}}));
+	EXPECT_FALSE(Protocol::ProcessFilter("user:ci-runner").matches(Json{{"user",nullptr}}));
+	EXPECT_TRUE(Protocol::ProcessFilter("user:1001").matches(Json{{"user","1001"}}));
+	EXPECT_FALSE(Protocol::ProcessFilter("user:1001").matches(process));
+}
+
+TEST(collection, user_filter_runs_before_limit_and_preserves_other_views) {
+	Fixture fixture;
+	fixture.write("proc/stat","cpu 100 0 50 850 0 0 0 0\ncpu0 100 0 50 850 0 0 0 0\n");
+	fixture.write("proc/42/stat",fixture.proc_stat(30));
+	Collector::Linux collector(fixture.root/"proc",fixture.root/"sys",100,4096);
+	Protocol::Subscription all;
+	all.detail=all.processes=true;
+	const auto first=collector.sample(all,1000);
+	const auto owner=first["processes"]["data"]["items"][0]["user"].get<std::string>();
+	// A second PID owned by the same account exercises the post-filter limit.
+	auto other=fixture.proc_stat(20); other.replace(0,2,"43");
+	fixture.write("proc/43/stat",other);
+	Protocol::Subscription mine=all, nobody=all, named=all;
+	mine.filter="user:"+owner; mine.limit=1; mine.sort="pid";
+	nobody.filter="user:"+owner+"-not-this-account";
+	named.filter="WoRkEr";
+	const auto result=collector.sample_batch(all,{{"mine",mine},{"nobody",nobody},{"name",named}},3000);
+	const auto& data=result["process_views"]["mine"]["data"];
+	EXPECT_EQ(data["matched"],2);
+	EXPECT_EQ(data["returned"],1);
+	EXPECT_TRUE(data["truncated"].get<bool>());
+	ASSERT_EQ(data["items"].size(),1);
+	EXPECT_EQ(data["items"][0]["user"],owner);
+	EXPECT_EQ(data["items"][0]["pid"],42);
+	EXPECT_TRUE(result["process_views"]["nobody"]["data"]["items"].empty());
+	EXPECT_EQ(result["process_views"]["name"]["data"]["matched"],2);
 }
 
 TEST(collection, cpu_guest_fields_reset_and_process_names) {

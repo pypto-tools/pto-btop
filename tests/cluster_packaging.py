@@ -4,6 +4,7 @@
 import hashlib
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -36,6 +37,23 @@ def check_enrollment_bootstrap(base, archive, metadata):
     node = bundle / "node"
     node.mkdir(parents=True)
     shutil.copy2(assets / "setup.py", bundle / "setup.py")
+    bootstrap = runpy.run_path(str(bundle / "setup.py"), run_name="bootstrap_test")
+    command = [sys.executable, "-c", "import time; time.sleep(30)"]
+    process = subprocess.Popen(command)
+    try:
+        try:
+            bootstrap["stop_background_agent"](process.pid, [sys.executable, "wrong-command"])
+        except ValueError as error:
+            assert "refusing to stop" in str(error)
+        else:
+            raise AssertionError("Installer tried to stop an unrelated process")
+        assert process.poll() is None
+        bootstrap["stop_background_agent"](process.pid, command)
+        process.wait(timeout=3)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=3)
     (bundle / "node.json").write_text(json.dumps({"id": "dev-a", "netbird_ip": "192.0.2.1",
         "hub": "https://192.0.2.2:8443", "version": "0.4.0-alpha.1", "package_sha256": {}}))
     for name in ("agent.json", "client.json", "agent.token", "viewer.token", "ca.pem"):
@@ -58,6 +76,7 @@ def check_enrollment_bootstrap(base, archive, metadata):
                    "--bin-dir", str(bindir), "--proxy", "http://127.0.0.1:7892")
         output = run(*command, "--check")
         assert "no installation" in output and not root.exists()
+        assert "cannot be combined" in run(*command, "--check", "--restart-agent", succeeds=False)
         run(*command, "--install-only")
         run(*command, "--install-only")
         for original in node.iterdir():

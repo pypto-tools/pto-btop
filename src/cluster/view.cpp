@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "view.hpp"
+#include "protocol/process_filter.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -101,7 +102,8 @@ void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms) {
 		};
 		groups["filesystems"]["data"]["items"].push_back({{"mount","/data"},{"device","259:1"},{"total_bytes",2199023255552ULL},{"used_bytes",1209462790553ULL},{"available_bytes",989560464999ULL}});
 		groups["disks"]["data"]["items"].push_back({{"name","nvme1n1"},{"id","259:1"},{"read_bytes_per_sec",16777216*(1+std::sin(tick*0.09))},{"write_bytes_per_sec",4194304},{"activity_pct",65}});
-		if (not host.filter.empty()) std::erase_if(processes.get_ref<Json::array_t&>(),[&](const auto& item){return item["name"].template get<std::string>().find(host.filter)==std::string::npos;});
+		const Protocol::ProcessFilter filter(host.filter);
+		std::erase_if(processes.get_ref<Json::array_t&>(),[&](const auto& item){return not filter.matches(item);});
 		groups["processes"]["data"]["items"]=processes;
 		groups["processes"]["data"]["matched"]=groups["processes"]["data"]["returned"]=processes.size();
 		for (const auto& item : processes) if (item["pid"]==host.selected_pid and item["start_time_ticks"]==host.selected_start) {

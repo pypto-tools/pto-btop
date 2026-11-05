@@ -71,7 +71,7 @@ CPU 使用率沿用上游口径：总时间取 user、nice、system、idle、iow
 
 `MemAvailable` 缺失时使用 MemFree + Cached 并以总量为上限，设置 estimated_available；这是当前简化回退值。Swap 总量为零显示 0／0，不做除零计算。每个字段的单位由名称确定，JSON 数字使用支持 uint64 的解析器，禁止中途用浮点存储累计字节数。
 
-概览订阅 detail=false、processes.enabled=false，cpu.cores 为空数组，processes 组省略。详情设置 detail=true 并传核心明细；协议进程默认 limit=100；当前 TUI 在详情中使用 enabled=true、sort=cpu、limit=500、filter=""。filter 采用大小写不敏感的字面子串匹配进程短名称，不支持正则／shell。agent 在 250ms 扫描预算内读取可见进程，再过滤、按 cpu／rss／threads 降序，或 pid／name／user 升序排序（相同时 PID 升序）；reverse=true 反向排序，再取 N；切换排序后的首帧可能处于 CPU 预热状态。total_visible 是读取到的可见进程数，matched 是过滤后总数，returned 是实际返回数，truncated 表示 matched > returned；权限不足另用 partial 标记。
+概览订阅 detail=false、processes.enabled=false，cpu.cores 为空数组，processes 组省略。详情设置 detail=true 并传核心明细；协议进程默认 limit=100；当前 TUI 在详情中使用 enabled=true、sort=cpu、limit=500、filter=""。filter 普通文本采用大小写不敏感的字面子串匹配进程短名称；从 `0.4.0-alpha.3` 起，`user:TEXT` 对进程的 user 字段做大小写不敏感的字面子串匹配，例如 `user:dev` 匹配 `developer`。空 `user:` 不匹配任何进程；空字符串恢复全部进程。不支持正则／shell，用户名和进程名条件不能组合。消息结构仍为 v1，旧采集器只理解进程名过滤，使用新语法必须更新目标机器的采集器。agent 在 250ms 扫描预算内读取可见进程，再过滤、按 cpu／rss／threads 降序，或 pid／name／user 升序排序（相同时 PID 升序）；reverse=true 反向排序，再取 N；切换排序后的首帧可能处于 CPU 预热状态。total_visible 是读取到的可见进程数，matched 是过滤后总数，returned 是实际返回数，truncated 表示 matched > returned；权限不足另用 partial 标记。
 
 示例时间线：agent hello → client 第 1 行 → agent 第 2–4 行 → client 第 2 行 → agent 第 5–6 行 → client stop。两份文件分别记录两个方向，不能当作一次性发送全部请求的脚本；stop 在演示快照收完后发送。样例的第 3 个快照首次启用进程订阅，因此该组处于 warming_up。
 
