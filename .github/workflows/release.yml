@@ -22,28 +22,33 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
+            image: quay.io/pypa/manylinux_2_28_x86_64@sha256:7e41b1c7fd64dfc69703a1124b43c404382973ee06ec5d764b85c34d2221fded
           - arch: arm64
             runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux_2_28_aarch64@sha256:54b271d9562a3686298880df05367909e949ed317e7b1b79b59c696d75f78676
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
-    # GCC 14 on Debian 12: C++23 and glibc 2.36. The old mutable tag was retired.
-    # Digest source is recorded in docs/cluster/release.md.
+    timeout-minutes: 40
+    # GCC 14 on AlmaLinux 8, glibc 2.28; digests resolved from PyPA's Quay registry.
     container:
-      image: gcc@sha256:bf543463a2a7171654faed7d899d74a286fd3706ffb424f52a2cb4dc3f696039
+      image: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends cmake ninja-build nlohmann-json3-dev libssl-dev libgtest-dev python3 openssl binutils
+          dnf -y --disablerepo='epel*' install perl-core
+          echo /opt/python/cp312-cp312/bin >> "$GITHUB_PATH"
+          bash scripts/build-release-deps.sh /tmp/pto-btop-deps
       - name: Configure
         run: >-
-          cmake -S . -B build/cluster -G Ninja
-          -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=/usr/local/bin/g++
+          cmake -S . -B build/cluster
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_PREFIX_PATH=/tmp/pto-btop-deps -DOPENSSL_ROOT_DIR=/tmp/pto-btop-deps
           -DBTOP_CLUSTER=ON -DBTOP_GPU=OFF -DBTOP_LTO=OFF
           -DBTOP_CLUSTER_STATIC_CXX_RUNTIME=ON -DBUILD_TESTING=ON
+          -DBTOP_CLUSTER_STATIC_OPENSSL=ON -DBTOP_CLUSTER_PACKAGE_MAX_GLIBC=2.28
+          -DPython3_EXECUTABLE=/opt/python/cp312-cp312/bin/python3
       - name: Build
         run: cmake --build build/cluster --parallel 2
       - name: Test collection, HTTPS, terminals and installation
@@ -83,6 +88,8 @@ jobs:
           test -f "pto-btop-${RELEASE_TAG#v}-linux-amd64.tar.gz"
           test -f "pto-btop-${RELEASE_TAG#v}-linux-arm64.tar.gz"
           sha256sum --check ./*.sha256
+      - name: Generate installer with both package checksums
+        run: python3 scripts/package-bootstrap.py --assets dist
       - name: Create draft prerelease
         env:
           GH_TOKEN: ${{ github.token }}

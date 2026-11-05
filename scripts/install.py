@@ -63,7 +63,7 @@ def validate(package):
         result = subprocess.run([str(package / "bin" / command), "--version"],
                                 capture_output=True, text=True, timeout=5)
         if result.returncode or result.stdout.strip() != f"{command} {version}":
-            raise ValueError(f"Cannot run {command}; check OpenSSL 3 and runtime libraries: {result.stderr.strip()}")
+            raise ValueError(f"Cannot run {command}; check required runtime libraries: {result.stderr.strip()}")
     return metadata, sha256(metadata_path)
 
 
@@ -158,7 +158,8 @@ def main():
     package = Path(__file__).resolve().parent
     metadata, digest = validate(package)
     if args.check:
-        print(f"Verified pto-btop {metadata['version']} ({metadata['architecture']}, glibc >= {metadata['minimum_glibc']}, OpenSSL 3)")
+        linkage = "bundled" if metadata.get("openssl_linkage") == "static" else "system"
+        print(f"Verified pto-btop {metadata['version']} ({metadata['architecture']}, glibc >= {metadata['minimum_glibc']}, {linkage} OpenSSL 3)")
     else:
         install(package, Path(os.path.abspath(args.root)), Path(os.path.abspath(args.bin_dir)), metadata, digest)
 

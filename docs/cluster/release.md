@@ -2,7 +2,7 @@
 
 项目对外名称为 `pto-btop`，本地源码目录仍可保留 `ci-tools/btop-cluster`。
 独立仓库为 [pypto-tools/pto-btop](https://github.com/pypto-tools/pto-btop)，
-首个预发布版本准备使用 `v0.4.0-alpha.1`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
+兼容性预发布版本为 `v0.4.0-alpha.2`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
 已发布安装包以 [Releases](https://github.com/pypto-tools/pto-btop/releases) 为准。
 
 ## 包与兼容性
@@ -11,14 +11,16 @@
 配置生成器：`pto-btop-VERSION-linux-{amd64,arm64}.tar.gz`，附 SHA-256 文件。
 Linux `x86_64` 使用 amd64，`aarch64` 使用 arm64。
 
-使用 glibc 和 OpenSSL 3；安装与配置生成需要 Python 3.10+，生成证书另需
-`openssl` 命令。包中的 `package.json` 记录实际要求的 glibc 版本和动态库。
+发布包支持 glibc 2.28+，随程序静态链接 OpenSSL 3.5.9，无需系统安装 OpenSSL 3。
+安装与配置生成需要 Python 3.10+，可通过 uv 提供；生成证书另需
+`openssl` 命令（支持 1.1.1 和 3.x，使用独立配置生成证书扩展）。包中的 `package.json` 记录实际要求的 glibc 版本和动态库。
 `install.py --check` 校验文件、CPU 架构、glibc，并启动三个程序的 `--version`
 确认动态库可加载。校验和用于验证下载完整性，必须从可信发布渠道同时获取包
 和校验文件；不要将包内清单当作独立签名。
 
-发布构建使用 `BTOP_CLUSTER_STATIC_CXX_RUNTIME=ON`，随程序静态链接 GCC 的
-C++ 运行库；OpenSSL 和 glibc 保持系统动态链接。不是完全静态或 Alpine 包。
+发布构建使用 `BTOP_CLUSTER_STATIC_CXX_RUNTIME=ON` 和
+`BTOP_CLUSTER_STATIC_OPENSSL=ON`，静态链接 GCC C++ 运行库和 OpenSSL；
+glibc 保持系统动态链接。不是完全静态或 Alpine 包。
 包内保留 GPLv3 文本和 GCC Runtime Library Exception，以及其他依赖许可证。
 
 ## 安装与更新
@@ -59,6 +61,40 @@ pto-btop/
 回退可运行旧版目录内的 `install.py`，使用相同安装参数，然后显式重启服务。
 配置格式变化时先阅读该版说明；应用回退不会回滚配置。
 
+## 已有节点配置时直接安装
+
+保留原配置目录里的 `node.json` 和 `node/`。在该目录下载新版安装入口；
+入口本身不含任何节点地址或凭据，两个架构的包校验和在发布时固定写入。
+更新程序无需重新分发或生成配置。以下示例代理只用于下载：
+
+```bash
+curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
+  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.2/setup.py
+curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
+  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.2/setup.py.sha256
+sha256sum --check setup.py.sha256
+HTTPS_PROXY=http://127.0.0.1:7892 \
+  uv run --no-project --python 3.12 setup.py --proxy http://127.0.0.1:7892
+```
+
+uv 自动获取所需 Python；服务器已提供 Python 3.10+ 时可以直接运行
+`python3 setup.py --proxy http://127.0.0.1:7892`。不需要 sudo。
+uv 的安装说明见 [官方文档](https://docs.astral.sh/uv/getting-started/installation/)。
+`setup.py --check` **仅检查，不安装、不复制配置、不启动采集器**。
+`--install-only` 安装但不启动；无这两个参数时安装并启动采集器。
+脚本校验包、NetBird 地址和已有配置，拒绝覆盖不同的节点配置。
+默认安装至 `~/.local/share/pto-btop`，命令位于 `~/.local/bin`。
+
+安装成功后查看所有已授权节点：
+
+```bash
+"$HOME/.local/bin/pto-btop" \
+  --config "$HOME/.local/share/pto-btop/config/node/client.json" --detail
+```
+
+已有服务升级后仍需显式重启才能载入新程序；配置和日志保留。新安装优先使用
+当前账号可用的 user systemd，否则在后台启动；开机自启取决于服务管理器配置。
+
 ## 配置与服务
 
 安装后从 `app/current/scripts/https-init.py` 生成配置，目标可用工具根目录的
@@ -97,24 +133,29 @@ systemctl --user enable --now pto-btop-agent.service
 ELF 依赖和版本；不重新编译，不打包配置、测试密钥、原版 btop 程序或本地参考截图。
 输出目录已有同名资产时拒绝覆盖。
 
-CI 使用原生 `ubuntu-24.04` 和 `ubuntu-24.04-arm` runner，在同一 GCC 14 / Debian 12
-容器中构建测试，限制发布包的 glibc 要求不超过 2.36。镜像固定为：
+CI 使用原生 `ubuntu-24.04` 和 `ubuntu-24.04-arm` runner，在 PyPA 的
+manylinux_2_28（AlmaLinux 8、GCC 14）容器中构建测试，限制发布包的 glibc
+要求不超过 2.28。镜像摘要于 2026-11-05 从官方 Quay API 解析：
 
 ```text
-gcc@sha256:bf543463a2a7171654faed7d899d74a286fd3706ffb424f52a2cb4dc3f696039
+quay.io/pypa/manylinux_2_28_x86_64@sha256:7e41b1c7fd64dfc69703a1124b43c404382973ee06ec5d764b85c34d2221fded
+quay.io/pypa/manylinux_2_28_aarch64@sha256:54b271d9562a3686298880df05367909e949ed317e7b1b79b59c696d75f78676
 ```
 
-摘要取自 [Docker 官方镜像历史记录](https://github.com/docker-library/repo-info/blob/feb0bc4bc9fcdfb0a9e348d01794bc8b537f48ba/repos/gcc/remote/14-bookworm.md)。
-原来的 `14-bookworm` 可变标签已撤下，因此按摘要引用。远程实际拉取和双架构执行
-仍需首轮 CI 验证；本机网络不能访问 Docker Registry。本地包使用现有 GCC 15 和
-glibc 2.36 构建，不应称为已经验证了该容器。apt 构建依赖仍使用 Debian 仓库更新；
-当前不承诺不同日期生成的包逐字节一致。
+来源与基线见 [PyPA manylinux](https://github.com/pypa/manylinux)。容器补充 Perl
+构建模块，`scripts/build-release-deps.sh` 校验固定 SHA-256 后构建 OpenSSL
+3.5.9 静态库和 nlohmann/json 3.11.3。CMake 的 `OPENSSL_ROOT_DIR` 和
+`CMAKE_PREFIX_PATH` 指向依赖安装前缀，禁止发布包动态依赖 libssl/libcrypto。
+CI 在同一 glibc 2.28 环境运行真实 HTTPS、终端和安装测试。
+本地开发仍可使用动态 OpenSSL 和较新 glibc，但这类包需要显式传入
+`--allow-shared-openssl --max-glibc VERSION`，不得当作兼容发布包。
+AlmaLinux 的 Perl 构建依赖仍随仓库更新，不承诺跨日期生成的包逐字节一致。
 
 1. 整理并提交变更，在 `pypto-tools/pto-btop` 建立独立仓库，保留上游来源与许可证。
 2. 推送 `main`，确认两个架构都通过采集、HTTPS、终端及安装升级测试。
 3. 确认 `VERSION` 和 `docs/cluster/releases/vVERSION.md` 一致，再推送版本标签。
 4. 标签触发相同的构建、测试和打包。两个任务成功后，自动创建带两个安装包、
-   校验文件和说明的 **draft prerelease**。重复标签不会覆盖已有 Release。
+   校验文件、包含两个包固定校验和的 `setup.py` 和说明的 **draft prerelease**。重复标签不会覆盖已有 Release。
 5. 检查草稿和实际机器验收结果，再明确发布预览版。第一版应标为预发布。
 
 本机参考截图在 `.gitignore` 中保留，仅使用模拟数据生成的 `detail-preview.png`

@@ -10,6 +10,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 
@@ -31,7 +32,9 @@ def main():
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path("dist"))
     parser.add_argument("--cmake", default="cmake")
-    parser.add_argument("--max-glibc", default="2.36")
+    parser.add_argument("--max-glibc", default="2.28")
+    parser.add_argument("--allow-shared-openssl", action="store_true",
+                        help="Allow a non-release local package depending on system OpenSSL")
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
     version = (source / "VERSION").read_text().strip()
@@ -74,6 +77,12 @@ def main():
             (root / "bin" / public).symlink_to(original)
         if version_tuple(minimum_glibc) > version_tuple(args.max_glibc):
             raise ValueError(f"Build requires glibc {minimum_glibc}; maximum is {args.max_glibc}")
+        runtime = json.loads((root / "share/btop-cluster/package-runtime.json").read_text())
+        shared_openssl = any(name.startswith(("libssl.so", "libcrypto.so")) for name in libraries)
+        if shared_openssl != (runtime["openssl_linkage"] == "shared"):
+            raise ValueError("OpenSSL linkage disagrees with the installed build metadata")
+        if shared_openssl and not args.allow_shared_openssl:
+            raise ValueError("Configure with -DBTOP_CLUSTER_STATIC_OPENSSL=ON for release packages")
         shutil.copy2(source / "scripts/install.py", root / "install.py")
         shutil.copy2(source / "README.md", root / "README.md")
         shutil.copy2(source / "VERSION", root / "VERSION")
@@ -95,7 +104,7 @@ def main():
         shutil.copy2(source / "docs/cluster/third-party.md", licenses / "third-party.md")
         manifest = {"format": 1, "name": "pto-btop", "version": version,
                     "architecture": architecture, "minimum_glibc": minimum_glibc,
-                    "openssl_major": 3, "libraries": sorted(libraries),
+                    "openssl_major": 3, **runtime, "libraries": sorted(libraries),
                     "files": {}, "symlinks": {}}
         for path in sorted(root.rglob("*")):
             relative = path.relative_to(root).as_posix()
@@ -105,7 +114,7 @@ def main():
                 manifest["files"][relative] = checksum(path)
         (root / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
         # Validate the same payload an installing user receives.
-        subprocess.run(["python3", str(root / "install.py"), "--check"], check=True)
+        subprocess.run([sys.executable, str(root / "install.py"), "--check"], check=True)
         temporary_archive = Path(directory) / archive.name
         with tarfile.open(temporary_archive, "w:gz") as output:
             output.add(root, arcname=name)

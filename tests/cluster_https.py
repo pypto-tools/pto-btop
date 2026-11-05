@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import secrets
-import signal
 import socket
 import ssl
 import subprocess
@@ -36,8 +35,8 @@ def until(fn, timeout=12):
             last = fn()
             if last:
                 return last
-        except (ConnectionError, OSError, http.client.HTTPException):
-            pass
+        except (ConnectionError, OSError, http.client.HTTPException) as error:
+            last = str(error)
         time.sleep(0.1)
     raise AssertionError(f"Timed out: {last}")
 
@@ -88,7 +87,11 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
     def start_server():
         log = open(root / f"server-{len(children)}.log", "wb")
         process = launch([server_binary, "--config", str(settings_path)], stdout=log, stderr=log)
-        until(lambda: api("GET", "/api/v1/hosts", tokens["a", "viewer"]), 8)
+        try:
+            until(lambda: api("GET", "/api/v1/hosts", tokens["a", "viewer"]), 8)
+        except AssertionError as error:
+            log.flush()
+            raise AssertionError(f"{error}\nHub log: {Path(log.name).read_text()}") from error
         return process
 
     try:
@@ -104,7 +107,8 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         hello = {"version": 1, "type": "hello", "host": {"os": "linux", "arch": "fixture"}}
         registration = api("POST", "/api/v1/agent/session", tokens["unit", "agent"],
                            {"instance_id": "test-instance", "hello": hello})
-        group = lambda data: {"status": "ok", "data": data, "observed_monotonic_ms": 1, "interval_ms": 1000}
+        def group(data):
+            return {"status": "ok", "data": data, "observed_monotonic_ms": 1, "interval_ms": 1000}
         body = {"session_id": registration["session_id"], "seq": 1, "interval_ms": 1000,
                 "wall_time": "2026-11-05T00:00:00Z", "process_views": {}, "groups": {
                     "cpu": group({"usage_pct": 12, "online_cores": 1, "cores": []}),
@@ -112,13 +116,17 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
                     "filesystems": group({"items": []}), "disks": group({"items": []}), "network": group({"items": []})}}
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], body)
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], body, expected=409)
-        bad = copy.deepcopy(body); bad["seq"] = 2; bad["groups"]["cpu"]["data"]["cores"] = [{"id": "bad"}]
+        bad = copy.deepcopy(body)
+        bad["seq"] = 2
+        bad["groups"]["cpu"]["data"]["cores"] = [{"id": "bad"}]
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], bad, expected=400)
         assert api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["seq"] == 1
         body["seq"] = 2
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], body)
         assert api("GET", "/api/v1/hosts/unit/history", tokens["unit", "viewer"])["history"]["history"] == [12, 12]
-        denied = copy.deepcopy(body); denied["session_id"] = "old-session"; denied["seq"] = 3
+        denied = copy.deepcopy(body)
+        denied["session_id"] = "old-session"
+        denied["seq"] = 3
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], denied, expected=409)
         print("HTTPS authentication, host ACLs, atomic snapshots and sequence checks: PASS", flush=True)
 
@@ -134,7 +142,8 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
                                 "-keyout", str(root / "wrong.key"), "-out", str(root / "wrong.pem"),
                                 "-subj", "/CN=wrong-ca"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 config["ca_file"] = str(root / "wrong.pem")
-            path = root / f"{case}.json"; path.write_text(json.dumps(config))
+            path = root / f"{case}.json"
+            path.write_text(json.dumps(config))
             result = subprocess.run([client_binary, "--config", str(path), "--check"], capture_output=True, timeout=8)
             assert result.returncode != 0 and b"SSL" in result.stderr, (case, result.stderr)
         print("Wrong CA and wrong server name rejected: PASS", flush=True)
@@ -142,7 +151,9 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         agents = []
         for host in ("a", "b", "c"):
             path = bundle / f"nodes/{host}/agent.json"
-            config = json.loads(path.read_text()); config["interval_ms"] = 1000; path.write_text(json.dumps(config))
+            config = json.loads(path.read_text())
+            config["interval_ms"] = 1000
+            path.write_text(json.dumps(config))
             log = open(root / f"agent-{host}.log", "wb")
             agents.append(launch([agent_binary, "--config", str(path)], stdout=log, stderr=log))
         until(lambda: all(api("GET", f"/api/v1/hosts/{host}/snapshot", tokens["a", "viewer"])["seq"] >= 2
@@ -155,7 +166,8 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         def result_view(user, view):
             return api("GET", "/api/v1/hosts/a/snapshot?view=" + view["id"], tokens[user, "viewer"])["snapshot"]["groups"]["processes"]
         until(lambda: all(result_view(user, view)["status"] != "warming_up" for user, view in views), 10)
-        first = result_view(*views[0])["data"]; second = result_view(*views[1])["data"]
+        first = result_view(*views[0])["data"]
+        second = result_view(*views[1])["data"]
         assert first["items"] and all("btop-agent" in row["name"] for row in first["items"])
         assert second["items"] == []
         selected = first["items"][0]
@@ -170,7 +182,8 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
 
         # Terminal read paths operate concurrently and remain responsive during hub failure.
         for index, host in enumerate(("a", "b", "c")):
-            master, slave = os.openpty(); resize(slave, 120, 36)
+            master, slave = os.openpty()
+            resize(slave, 120, 36)
             original = termios.tcgetattr(slave)
             process = launch([client_binary, "--config", str(bundle / f"nodes/{host}/client.json"), "--detail"],
                              stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
@@ -189,13 +202,15 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         assert check.returncode == 0 and check.stdout.count("ONLINE") == 3, check.stdout + check.stderr
         print("Three real agents, three independent PTYs and --check: PASS", flush=True)
 
-        agents[2].terminate(); assert agents[2].wait(timeout=5) == 0
+        agents[2].terminate()
+        assert agents[2].wait(timeout=5) == 0
         until(lambda: api("GET", "/api/v1/hosts/c/snapshot", tokens["a", "viewer"])["status"] == "DISCONNECTED", 13)
         assert api("GET", "/api/v1/hosts/a/snapshot", tokens["a", "viewer"])["status"] == "ONLINE"
         expired = api("POST", "/api/v1/views", tokens["a", "viewer"], {"host_id": "a", "subscription": subscription()})
         time.sleep(15.3)
         api("GET", "/api/v1/hosts/a/snapshot?view=" + expired["id"], tokens["a", "viewer"], expected=404)
-        server.terminate(); assert server.wait(timeout=6) == 0
+        server.terminate()
+        assert server.wait(timeout=6) == 0
         ptys[0][3].wait_text(ptys[0][0], "DISCONNECTED", timeout=15)
         started = time.monotonic()
         for master, slave, process, screen, original in ptys[1:]:
@@ -219,6 +234,8 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
                 try:
                     process.wait(timeout=6)
                 except subprocess.TimeoutExpired:
-                    process.kill(); process.wait()
+                    process.kill()
+                    process.wait()
         for master, slave, *_ in ptys:
-            os.close(master); os.close(slave)
+            os.close(master)
+            os.close(slave)

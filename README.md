@@ -10,7 +10,7 @@ verifies HTTPS certificates and uses separate agent and viewer credentials.
 
 ![Terminal detail view with simulated data](docs/cluster/detail-preview.png)
 
-**Status:** `0.4.0-alpha.1` preview. Local Linux ARM64 collection, three-agent
+**Status:** `0.4.0-alpha.2` preview. Local Linux ARM64 collection, three-agent
 HTTPS tests and three independent terminal sessions have been tested. Real
 three-machine deployment remains pending. Check the [amd64 / arm64 build results](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)
 for CI validation and [Releases](https://github.com/pypto-tools/pto-btop/releases)
@@ -23,17 +23,18 @@ Packages are named `pto-btop-VERSION-linux-amd64.tar.gz` and
 (`x86_64` → `amd64`, `aarch64` → `arm64`). Each package includes all three programs,
 themes, a configuration generator, installation tooling and licenses.
 
-Runtime requirements: Linux with glibc, OpenSSL 3 shared libraries, and Python
-3.10+ for installation/configuration. The package records its actual minimum
+Runtime requirements: Linux with glibc 2.28+, and Python 3.10+ for
+installation/configuration. Release packages bundle OpenSSL 3.5.9; a system
+OpenSSL 3 installation is not required. The package records its actual minimum
 glibc version in `package.json` and checks compatibility before installation.
 Release builds bundle the GCC C++ runtime. These are not musl/Alpine packages.
 
 After downloading a package and its `.sha256` file:
 
 ```bash
-sha256sum --check pto-btop-0.4.0-alpha.1-linux-arm64.tar.gz.sha256
-tar -xzf pto-btop-0.4.0-alpha.1-linux-arm64.tar.gz
-cd pto-btop-0.4.0-alpha.1-linux-arm64
+sha256sum --check pto-btop-0.4.0-alpha.2-linux-arm64.tar.gz.sha256
+tar -xzf pto-btop-0.4.0-alpha.2-linux-arm64.tar.gz
+cd pto-btop-0.4.0-alpha.2-linux-arm64
 python3 install.py --check
 python3 install.py --root "$HOME/.local/share/pto-btop" --bin-dir "$HOME/.local/bin"
 "$HOME/.local/bin/pto-btop" --local --detail
@@ -44,6 +45,15 @@ Organization defaults are `/home/pypto-tools/pto-btop` and `/usr/local/bin`;
 the installing account must have write access to both. Installation does not
 enable services or create enrollment credentials. Upgrades preserve configuration
 and state; [installation and release guide](docs/cluster/release.md) has details.
+
+If you already have a private node enrollment bundle (`node.json` and `node/`),
+download the release
+[`setup.py`](https://github.com/pypto-tools/pto-btop/releases/download/v0.4.0-alpha.2/setup.py)
+and its `.sha256` file into that directory. Verify the checksum, then run
+`python3 setup.py --proxy http://127.0.0.1:7892` to install and start the agent.
+`--check` only validates and does **not** install. See the
+[uv and enrollment installation instructions](docs/cluster/release.md#已有节点配置时直接安装)
+if the system Python is older than 3.10. Existing enrollment credentials are reused.
 
 ## Connect the machines
 
@@ -81,13 +91,15 @@ cmake -S . -B build/cluster -G Ninja \
   -DBTOP_CLUSTER_STATIC_CXX_RUNTIME=ON
 cmake --build build/cluster --parallel 2
 ctest --test-dir build/cluster --parallel 2 --output-on-failure
-python3 scripts/package.py --build-dir build/cluster --output-dir dist
+python3 scripts/package.py --build-dir build/cluster --output-dir dist \
+  --max-glibc 2.36 --allow-shared-openssl
 ```
 
-Packaging rejects a glibc requirement above 2.36 by default. Building directly on
-a newer distribution may therefore work locally but fail the release check. Use
-the fixed CI container for that baseline, or deliberately choose another supported
-baseline with `--max-glibc` and document it.
+Release packaging rejects a glibc requirement above 2.28 or shared OpenSSL by
+default. The example above explicitly permits a local development package.
+Building directly on a newer distribution may therefore work locally but fail the release check. Use
+the pinned manylinux CI containers, `scripts/build-release-deps.sh`, and
+`-DBTOP_CLUSTER_STATIC_OPENSSL=ON` for distributable packages.
 
 ## Documentation and origin
 

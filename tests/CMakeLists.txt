@@ -47,8 +47,14 @@ if(BTOP_CLUSTER)
 endif()
 
 if(BTOP_CLUSTER AND BTOP_CLUSTER_STATIC_CXX_RUNTIME)
+  # Local builds may use a newer glibc or shared OpenSSL; CI explicitly sets 2.28.
+  set(BTOP_CLUSTER_PACKAGE_MAX_GLIBC "2.36" CACHE STRING "glibc cap for local package tests")
+  set(package_test_options --max-glibc "${BTOP_CLUSTER_PACKAGE_MAX_GLIBC}")
+  if(NOT BTOP_CLUSTER_STATIC_OPENSSL)
+    list(APPEND package_test_options --allow-shared-openssl)
+  endif()
   add_test(NAME cluster_packaging COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/cluster_packaging.py ${PROJECT_SOURCE_DIR}
-    ${CMAKE_BINARY_DIR} ${CMAKE_COMMAND})
+    ${CMAKE_BINARY_DIR} ${CMAKE_COMMAND} ${package_test_options})
   set_tests_properties(cluster_packaging PROPERTIES TIMEOUT 120)
 endif()

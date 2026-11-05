@@ -52,12 +52,18 @@ def main():
     def write_json(path, data):
         path.write_text(json.dumps(data, indent=2) + "\n")
 
-    run("openssl", "req", "-x509", "-newkey", "rsa:3072", "-nodes", "-days", "3650",
+    # Do not inherit distribution-specific req/x509 extensions. OpenSSL 1.1.1
+    # can duplicate -addext OIDs already present in the system configuration.
+    request_config = root / "request.cnf"
+    request_config.write_text("[req]\ndistinguished_name=dn\n[dn]\nCN=Common Name\n")
+    run("openssl", "req", "-config", str(request_config), "-x509", "-newkey", "rsa:3072", "-nodes", "-days", "3650",
         "-keyout", "ca-key.pem", "-out", "ca.pem", "-subj", "/CN=btop-cluster private CA",
-        "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
-    run("openssl", "req", "-newkey", "rsa:3072", "-nodes", "-keyout", "server/key.pem",
+        "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+        "-addext", "subjectKeyIdentifier=hash")
+    run("openssl", "req", "-config", str(request_config), "-newkey", "rsa:3072", "-nodes", "-keyout", "server/key.pem",
         "-out", "server/request.pem", "-subj", "/CN=btop-cluster server")
     (server / "extensions.cnf").write_text(
+        "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n"
         "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
         "extendedKeyUsage=serverAuth\nsubjectAltName=" + san + "\n")
     run("openssl", "x509", "-req", "-in", "server/request.pem", "-CA", "ca.pem", "-CAkey", "ca-key.pem",

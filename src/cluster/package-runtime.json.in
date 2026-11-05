@@ -1,0 +1,4 @@
+{
+  "openssl_version": "@OPENSSL_VERSION@",
+  "openssl_linkage": "@BTOP_CLUSTER_OPENSSL_LINKAGE@"
+}
