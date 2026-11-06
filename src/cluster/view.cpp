@@ -142,6 +142,66 @@ std::string draw_card(const Host& host, const Rect& rect, bool selected, const D
 	return out+Theme::c("main_bg")+Theme::c("main_fg");
 }
 
+std::string draw_cluster_summary(const std::vector<Host>& hosts,const Rect& rect,const Draw::Style& style) {
+	const auto& [x,y,width,height]=rect;
+	const int left=x+2, inner=width-4, count=hosts.size();
+	const auto totals=overview_totals(hosts);
+	auto out=Draw::createBox(x,y,width,height,Theme::c("mem_box"),true,"cluster | overview","1-3 Host details",0,style);
+	auto write=[&](int row,const std::string& value,const std::string& color="main_fg") {
+		out+=Mv::to(y+row,left)+Theme::c("main_bg")+Theme::c(color)+safe_text(value,inner);
+	};
+	auto suffix=[&](int available,bool partial=false){return available<count or partial ? "*" : "";};
+	const auto cards=totals.card_hosts ? fmt::format("{}/{}{}",totals.free_cards,totals.total_cards,suffix(totals.card_hosts,totals.cards_partial)) : "--";
+	const auto waiting=totals.queue_hosts ? std::to_string(totals.waiting)+suffix(totals.queue_hosts,totals.queue_partial) : "--";
+	const std::array<std::string,4> labels={"ONLINE","CORES","NPU FREE","WAITING"};
+	const std::array<std::string,4> values={fmt::format("{}/{}",totals.online,count),std::to_string(totals.cores),cards,waiting};
+	const std::array<std::string,4> colors={"cpu_start","download_end","cached_mid","cpu_mid"};
+	const int tile_width=(inner-3)/4;
+	for (int i=0;i<4;++i) {
+		const int tx=left+i*(tile_width+1), tw=i==3 ? left+inner-tx : tile_width;
+		out+=Draw::createBox(tx,y+1,tw,3,Theme::c("div_line"),true,labels[i],"",0,style);
+		out+=Mv::to(y+2,tx+2)+Theme::c(values[i]=="--" ? "graph_text" : colors[i])+safe_text(values[i],tw-4);
+	}
+	write(4,totals.cpu_hosts ? fmt::format("CPU {:5.1f}%{}  | weighted by core count",totals.cpu,suffix(totals.cpu_hosts)) : "CPU -- | awaiting fresh samples");
+	if (totals.cpu_hosts) { Draw::Meter meter(inner,"cpu"); out+=Mv::to(y+5,left)+meter(std::lround(totals.cpu)); }
+	write(6,totals.memory_hosts ? fmt::format("MEM {:.0f} / {:.0f} GiB available{}",totals.memory_available/gib,totals.memory_total/gib,suffix(totals.memory_hosts)) : "MEM -- | awaiting fresh samples");
+	if (totals.memory_hosts) {
+		Draw::Meter meter(inner,"available");
+		out+=Mv::to(y+7,left)+meter(std::lround(100.0*totals.memory_available/totals.memory_total));
+	}
+	const int start=9, stride=std::max(1,(height-3-start)/count);
+	write(8,stride==1 ? "HOST          CPU%   LOAD/CORE  NPU FREE" : "HOST COMPARISON  |  CPU trends / free cards","title");
+	for (int i=0;i<count;++i) {
+		const auto& host=hosts[i]; const int row=start+i*stride;
+		const bool online=host.status=="ONLINE", cpu=online and host.cpu_valid and host.cores>0;
+		const auto usage=cpu ? fmt::format("{:.1f}",host.cpu) : "--";
+		const auto load=cpu ? fmt::format("{:.2f}",host.load[0]/host.cores) : "--";
+		const auto free=card_summary(host,true);
+		if (stride==1) {
+			write(row,fmt::format("{} {:9} {:>6} {:>11} {:>9}",i+1,safe_text(host.name,9),usage,load,free),online ? "main_fg" : "graph_text");
+			continue;
+		}
+		write(row,fmt::format("{} {}  |  CPU {}%  load/core {}",i+1,safe_text(host.name,16),usage,load),online ? "title" : "graph_text");
+		const int graph_width=std::max(10,inner/3), info_x=left+graph_width+2, info_width=inner-graph_width-2;
+		if (cpu) {
+			Draw::Graph graph(graph_width,stride-1,"cpu",host.history,style.graph_symbol,false,false,0,0,style);
+			out+=Mv::to(y+row+1,left)+graph();
+		}
+		auto info=[&](int offset,const std::string& value,const std::string& color="main_fg") {
+			out+=Mv::to(y+row+offset,info_x)+Theme::c(color)+safe_text(value,info_width);
+		};
+		const auto state=resource_status(host,"cards");
+		const auto& data=metric_data(host,"cards");
+		const auto wait=state=="ok" or state=="partial" ? amount(data.at("scheduler"),"pending_tasks") : "--";
+		info(1,"NPU "+free+" free  | wait "+wait,"cached_mid");
+		if (stride>=3) info(2,online and host.memory_valid ? fmt::format("MEM {:.0f} GiB available",(host.memory_total-host.memory_used)/gib) : "MEM -- available");
+		if (stride>=4) info(3,online ? "CARDS "+state : host.status,"graph_text");
+	}
+	write(height-3,fmt::format("Samples: CPU {}/{}  MEM {}/{}  CARDS {}/{}",totals.cpu_hosts,count,totals.memory_hosts,count,totals.card_hosts,count),"graph_text");
+	write(height-2,"Online data only  |  * partial  -- unavailable","graph_text");
+	return out+Theme::c("main_bg")+Theme::c("main_fg");
+}
+
 }
 
 Geometry layout(int width, int height, int count) {
@@ -249,16 +309,22 @@ std::string render(const std::vector<Host>& hosts, int width, int height,
 		return out;
 	}
 	out += at(1, 2, hosts[0].simulated ? "btop-cluster | DEMO - simulated data" : "btop-cluster | LIVE");
+	const auto host_keys=hosts.size()==1 ? std::string{"1"} : "1-"+std::to_string(hosts.size());
+	const auto overview_keys="Tab Select   Enter Details   "+host_keys+" Host   u Users   t Theme   q Quit";
 	if (detail) {
 		out += detail_view(hosts.at(selected), width, height, style);
-		const std::string controls="1-4 Host  Esc Overview  ? Help  q Quit";
+		const std::string controls=host_keys+" Host  Esc Overview  ? Help  q Quit";
 		out += at(1,width-1-static_cast<int>(controls.size()),controls);
 	} else if (geometry.layout == Layout::cards) {
 		int grid_height=0;
 		for (std::size_t i=0;i<hosts.size();++i) grid_height=std::max(grid_height,chip_grid(hosts[i],geometry.cards[i]).height);
 		for (std::size_t i=0;i<hosts.size();++i)
 			out+=draw_card(hosts[i],geometry.cards[i],i==static_cast<std::size_t>(selected),style,grid_height);
-		out += at(height - 1, 2, "Tab Select   Enter Details   1-4 Host   u Users   t Theme   q Quit");
+		if (hosts.size()==3) {
+			const auto& below=geometry.cards[2];
+			out+=draw_cluster_summary(hosts,{geometry.cards[1].x,below.y,below.width,below.height},style);
+		}
+		out += at(height - 1, 2, overview_keys);
 	} else {
 		out += at(3,2,"HOST       CPU    MEM used/total GiB    NPU free  WAIT   USERS/SESS");
 		for (std::size_t i=0; i<hosts.size(); ++i) {
@@ -273,7 +339,7 @@ std::string render(const std::vector<Host>& hosts, int width, int height,
 		}
 
 		out += at(19, 2, "Compact overview | expand to 120x36 for graphs");
-		out += at(height - 1, 2, "Tab Select   Enter Details   1-4 Host   u Users   t Theme   q Quit");
+		out += at(height - 1, 2, overview_keys);
 	}
 	if (hosts[selected].users_open) out+=users_overlay(hosts[selected],width,height,style);
 	return out + Fx::reset;

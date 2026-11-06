@@ -264,3 +264,63 @@ TEST(cluster_render, pending_process_details_keep_basic_fields_visible) {
 	EXPECT_NE(frame.find("PPID"),std::string::npos);
 	EXPECT_EQ(frame.find("Process details unavailable"),std::string::npos);
 }
+
+TEST(cluster_state, overview_totals_weight_cores_and_exclude_unavailable_samples) {
+	auto hosts=Cluster::demo_hosts(); hosts.resize(3);
+	hosts[0].cores=2; hosts[0].cpu=100; hosts[0].memory_total=100; hosts[0].memory_used=25;
+	hosts[1].cores=6; hosts[1].cpu=0; hosts[1].memory_total=300; hosts[1].memory_used=150;
+	hosts[2].status="STALE";
+	auto totals=Cluster::overview_totals(hosts);
+	EXPECT_EQ(totals.online,2); EXPECT_EQ(totals.cores,8); EXPECT_DOUBLE_EQ(totals.cpu,25);
+	EXPECT_EQ(totals.memory_total,400); EXPECT_EQ(totals.memory_available,225);
+	EXPECT_EQ(totals.card_hosts,2); EXPECT_EQ(totals.free_cards,17); EXPECT_EQ(totals.total_cards,24);
+	EXPECT_EQ(totals.queue_hosts,2); EXPECT_EQ(totals.waiting,2);
+	hosts[0].groups["cards"]["data"]["age_ms"]=16000;
+	hosts[1].groups["cards"]["data"]["scheduler"]["state"]="maintenance";
+	for (auto& host : hosts) { host.cpu_valid=false; host.memory_valid=false; }
+	totals=Cluster::overview_totals(hosts);
+	EXPECT_EQ(totals.cpu_hosts,0); EXPECT_EQ(totals.cpu,-1); EXPECT_EQ(totals.memory_hosts,0);
+	EXPECT_EQ(totals.card_hosts,0); EXPECT_EQ(totals.queue_hosts,0);
+	hosts[0].groups.erase("cards"); hosts[1].status="DISCONNECTED";
+	EXPECT_EQ(Cluster::overview_totals(hosts).card_hosts,0);
+}
+
+TEST(cluster_state, overview_totals_preserve_partial_and_unknown_counts) {
+	auto hosts=Cluster::demo_hosts(); hosts.resize(1);
+	auto& group=hosts[0].groups["cards"];
+	group["status"]="partial"; group["data"]["status"]="partial";
+	group["data"]["summary"]["free"]=nullptr; group["data"]["scheduler"]["pending_tasks"]=nullptr;
+	auto totals=Cluster::overview_totals(hosts);
+	EXPECT_EQ(totals.card_hosts,0); EXPECT_EQ(totals.queue_hosts,0);
+	group["data"]["summary"]["free"]=3; group["data"]["scheduler"]["pending_tasks"]=2;
+	totals=Cluster::overview_totals(hosts);
+	EXPECT_EQ(totals.card_hosts,1); EXPECT_TRUE(totals.cards_partial);
+	EXPECT_EQ(totals.queue_hosts,1); EXPECT_TRUE(totals.queue_partial);
+}
+
+TEST(cluster_frame, three_host_summary_fills_only_spare_cell_and_preserves_history) {
+	std::setlocale(LC_CTYPE,"C.UTF-8"); Theme::setTheme(Theme::Options{});
+	for (const auto& [width,height] : {std::pair{120,36},{160,48},{200,60},{121,37}}) {
+		auto hosts=Cluster::demo_hosts(); hosts.resize(3);
+		const auto history=hosts[0].history;
+		Cluster::FrameDiff frames; Cluster::Screen terminal(width,height);
+		for (int step=0;step<3;++step) {
+			if (step) hosts[step-1].status="DISCONNECTED";
+			const auto frame=Cluster::render(hosts,width,height,0,false,{});
+			EXPECT_NE(frame.find("cluster | overview"),std::string::npos);
+			const auto delta=frames.update(frame,width,height);
+			if (step) EXPECT_EQ(delta.find("\x1b[2J"),std::string::npos);
+			terminal.apply(delta); Cluster::Screen expected(width,height); expected.apply(frame);
+			EXPECT_EQ(terminal.cells(),expected.cells());
+		}
+		EXPECT_EQ(hosts[0].history,history);
+	}
+	auto hosts=Cluster::demo_hosts();
+	for (int count : {1,2,4}) {
+		auto subset=hosts; subset.resize(count);
+		EXPECT_EQ(Cluster::render(subset,160,48,0,false,{}).find("cluster | overview"),std::string::npos);
+	}
+	hosts.resize(3);
+	EXPECT_EQ(Cluster::render(hosts,80,24,0,false,{}).find("cluster | overview"),std::string::npos);
+	EXPECT_EQ(Cluster::render(hosts,160,48,0,true,{}).find("cluster | overview"),std::string::npos);
+}

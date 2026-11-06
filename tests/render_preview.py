@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Export the actual demo ANSI frame as PNG; optional Pillow, no live host data.
 
-Usage: python tests/render_preview.py build/cluster/btop-cluster /tmp/detail.png [columns rows] [--overview]
+Usage: python tests/render_preview.py build/cluster/btop-cluster /tmp/detail.png [columns rows] [--overview] [--demo-hosts N]
 """
+import argparse
 import re
 import subprocess
-import sys
 import unicodedata
 from pathlib import Path
 
@@ -13,9 +13,17 @@ from PIL import Image, ImageDraw, ImageFont
 
 from terminal_support import screen
 
-width, height = (int(sys.argv[3]), int(sys.argv[4])) if len(sys.argv) >= 5 else (120, 36)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("binary")
+parser.add_argument("output", type=Path)
+parser.add_argument("columns", nargs="?", type=int, default=120)
+parser.add_argument("rows", nargs="?", type=int, default=36)
+parser.add_argument("--overview", action="store_true")
+parser.add_argument("--demo-hosts", type=int, choices=range(1, 5), default=4)
+options = parser.parse_args()
+width, height = options.columns, options.rows
 frame = subprocess.check_output(
-    [sys.argv[1], "--demo", *([] if "--overview" in sys.argv else ["--detail"]),
+    [options.binary, "--demo", "--demo-hosts", str(options.demo_hosts), *([] if options.overview else ["--detail"]),
      "--once", "--width", str(width), "--height", str(height)], text=True
 )
 screen(frame, width, height)
@@ -105,5 +113,5 @@ for row, line in enumerate(cells):
         left, top = margin + col * cell_width, margin + row * cell_height
         draw.rectangle((left, top, left + cell_width - 1, top + cell_height - 1), fill=background)
         draw.text((left, top), char, font=braille_font if 0x2800 <= ord(char) <= 0x28ff else font, fill=foreground)
-image.save(Path(sys.argv[2]))
-print(sys.argv[2])
+image.save(options.output)
+print(options.output)

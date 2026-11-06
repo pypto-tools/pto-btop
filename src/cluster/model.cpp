@@ -92,6 +92,36 @@ int card_panel_height(const Host& host,int terminal_height) {
 int card_visible_rows(const Host& host,int panel_height) {
 	return std::max(1,panel_height-5-(host.card_detail and panel_height>=11 ? 3 : 0));
 }
+OverviewTotals overview_totals(const std::vector<Host>& hosts) {
+	OverviewTotals totals;
+	double weighted_cpu=0; std::uint64_t cpu_cores=0;
+	for (const auto& host : hosts) {
+		if (host.status!="ONLINE") continue;
+		++totals.online;
+		if (host.cores>0) totals.cores+=host.cores;
+		if (host.cpu_valid and host.cores>0 and std::isfinite(host.cpu) and host.cpu>=0 and host.cpu<=100) {
+			weighted_cpu+=host.cpu*host.cores; cpu_cores+=host.cores; ++totals.cpu_hosts;
+		}
+		if (host.memory_valid and host.memory_total>0 and host.memory_used<=host.memory_total) {
+			totals.memory_total+=host.memory_total; totals.memory_available+=host.memory_total-host.memory_used;
+			++totals.memory_hosts;
+		}
+		const auto state=resource_status(host,"cards");
+		if (state!="ok" and state!="partial") continue;
+		const auto& data=metric_data(host,"cards"); const auto& counts=data.at("summary");
+		if (counts.at("free").is_number_integer() and counts.at("total").is_number_integer()) {
+			totals.free_cards+=counts.at("free").get<std::uint64_t>(); totals.total_cards+=counts.at("total").get<std::uint64_t>();
+			++totals.card_hosts; totals.cards_partial=totals.cards_partial or state=="partial";
+		}
+		const auto& waiting=data.at("scheduler").at("pending_tasks");
+		if (waiting.is_number_integer()) {
+			totals.waiting+=waiting.get<std::uint64_t>(); ++totals.queue_hosts;
+			totals.queue_partial=totals.queue_partial or state=="partial";
+		}
+	}
+	if (cpu_cores) totals.cpu=weighted_cpu/cpu_cores;
+	return totals;
+}
 void move_card(Host& host,int delta) {
 	const auto& items=metric_items(metric_data(host,"cards"),"devices");
 	if (items.empty()) { host.selected_card.clear(); return; }

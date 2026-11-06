@@ -31,12 +31,27 @@ for width, height in ((120, 36), (160, 48), (80, 24), (119, 36), (40, 10), (1, 1
     elif width > 35:
         assert "Resize terminal" in rendered
 
+# The fourth grid cell is a summary, not a selectable fourth server.
+for width, height in ((120, 36), (160, 48), (200, 60), (121, 37), (80, 24)):
+    for theme in ("Default", "TTY"):
+        result = subprocess.run([binary, "--demo", "--demo-hosts", "3", "--once",
+                                 "--width", str(width), "--height", str(height), "--theme", theme],
+                                capture_output=True, text=True, check=True, timeout=10)
+        rendered = screen(result.stdout, width, height)
+        assert ("cluster | overview" in rendered) == (width >= 120 and height >= 36)
+        assert "dev-04" not in rendered
+        assert "1-3 Host" in rendered and "1-4 Host" not in rendered
+        for host in ("dev-01", "dev-02", "dev-03"):
+            assert host in rendered
+
 for options in (["--low-color"], ["--theme", "TTY"]):
     result = subprocess.run([binary, "--demo", "--once", *options], capture_output=True, check=True, timeout=10)
     assert b"38;2;" not in result.stdout
     screen(result.stdout.decode(), 120, 36)
 
-for options in ([], ["--demo", "--interval-ms", "1"], ["--demo", "--width", "-1"], ["--bad"]):
+for options in ([], ["--demo", "--interval-ms", "1"], ["--demo", "--width", "-1"], ["--bad"],
+                ["--demo", "--demo-hosts", "0"], ["--demo", "--demo-hosts", "5"],
+                ["--local", "--demo-hosts", "3"]):
     result = subprocess.run([binary, *options], capture_output=True, timeout=10)
     assert result.returncode != 0
     assert b"\x1b[?1049h" not in result.stdout

@@ -56,6 +56,14 @@ struct Host {
 	std::set<std::string> collapsed;
 };
 
+struct OverviewTotals {
+	int online=0, cpu_hosts=0, memory_hosts=0, card_hosts=0, queue_hosts=0;
+	std::uint64_t cores=0, memory_total=0, memory_available=0, free_cards=0, total_cards=0, waiting=0;
+	double cpu=-1;
+	bool cards_partial=false, queue_partial=false;
+};
+OverviewTotals overview_totals(const std::vector<Host>& hosts);
+
 struct ProcessRow { std::size_t index; int depth = 0; bool children = false; };
 std::vector<ProcessRow> process_rows(const Host& host);
 void move_process(Host& host, int delta);

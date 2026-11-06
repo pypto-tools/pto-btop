@@ -67,7 +67,8 @@ int main(int argc, char** argv) {
 		bool demo = false, local = false, once = false, initial_detail = false, check = false;
 		std::vector<std::string> aliases;
 		std::string agent_path, https_config;
-		int width = 120, height = 36, interval = 2000;
+		int width = 120, height = 36, interval = 2000, demo_count = 4;
+		bool demo_count_set=false;
 		Theme::Options theme;
 		for (int i = 1; i < argc; ++i) {
 			const std::string_view arg = argv[i];
@@ -83,7 +84,8 @@ int main(int argc, char** argv) {
 					"  --version          Print the release version\n"
 					"  --config FILE      Read an HTTPS hub configuration\n"
 					"  --check            Check live connectivity without entering the TUI\n"
-					"  --demo             Four simulated hosts\n"
+					"  --demo             Simulated hosts (four by default)\n"
+					"  --demo-hosts N     Number of simulated hosts, 1-4\n"
 					"  --local            Collect this machine through a local agent\n"
 					"  --ssh ALIAS        Collect over SSH (repeat up to 4 times)\n"
 					"  --agent-path PATH  Override the local or remote agent executable\n"
@@ -94,9 +96,10 @@ int main(int argc, char** argv) {
 					"  --low-color        Use 256 colors\n"
 					"  --interval-ms N    Sample interval, 1000-10000 (default 2000)\n";
 				return 0;
-			} else if (arg == "--width" or arg == "--height" or arg == "--theme" or arg == "--interval-ms" or arg == "--ssh" or arg == "--agent-path" or arg == "--config") {
+			} else if (arg == "--width" or arg == "--height" or arg == "--theme" or arg == "--interval-ms" or arg == "--ssh" or arg == "--agent-path" or arg == "--config" or arg == "--demo-hosts") {
 				if (++i == argc) throw std::invalid_argument("Missing option value");
-				if (arg == "--width") width = positive(argv[i], 1000);
+				if (arg == "--demo-hosts") { demo_count=positive(argv[i],4); demo_count_set=true; }
+				else if (arg == "--width") width = positive(argv[i], 1000);
 				else if (arg == "--height") height = positive(argv[i], 500);
 				else if (arg == "--interval-ms") interval = positive(argv[i], 10000);
 				else if (arg == "--ssh") aliases.emplace_back(argv[i]);
@@ -107,6 +110,7 @@ int main(int argc, char** argv) {
 		}
 		if (int(demo) + int(local) + int(not aliases.empty()) + int(not https_config.empty()) != 1)
 			throw std::invalid_argument("Choose --config FILE, --demo, --local or --ssh ALIAS");
+		if (demo_count_set and not demo) throw std::invalid_argument("--demo-hosts requires --demo");
 		if (check and demo) throw std::invalid_argument("--check requires live collection");
 		if (not https_config.empty() and not agent_path.empty()) throw std::invalid_argument("--agent-path does not apply to HTTPS");
 		if (aliases.size()>4) throw std::invalid_argument("At most four SSH hosts");
@@ -128,7 +132,7 @@ int main(int argc, char** argv) {
 		std::vector<Cluster::Host> hosts;
 		std::vector<std::unique_ptr<Cluster::Session>> sessions;
 		std::unique_ptr<Cluster::HttpsFeed> https;
-		if (demo) hosts=Cluster::demo_hosts(interval);
+		if (demo) { hosts=Cluster::demo_hosts(interval); hosts.resize(demo_count); }
 		else if (not https_config.empty()) https=std::make_unique<Cluster::HttpsFeed>(https_config,hosts);
 		else {
 			if (local) aliases={"localhost"};
