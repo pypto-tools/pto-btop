@@ -74,7 +74,7 @@ std::string queue_summary(const Host& host) {
 	const auto state=resource_status(host,"cards");
 	if (state!="ok" and state!="partial") return "TASKS "+state;
 	const auto& queue=metric_data(host,"cards").at("scheduler");
-	return "TASKS run "+count_text(queue,"running_tasks")+"/"+count_text(queue,"max_concurrent")+" / wait "+count_text(queue,"pending_tasks")+" / owners "+count_text(metric_data(host,"cards").at("summary"),"occupying_users")+(queue.at("dispatching")==false ? " [paused]" : "");
+	return "TASKS run "+count_text(queue,"running_tasks")+" / limit "+count_text(queue,"max_concurrent")+" / wait "+count_text(queue,"pending_tasks")+" / owners "+count_text(metric_data(host,"cards").at("summary"),"occupying_users")+(queue.at("dispatching")==false ? " [paused]" : "");
 }
 std::string session_summary(const Host& host,bool compact) {
 	const auto state=resource_status(host,"sessions");

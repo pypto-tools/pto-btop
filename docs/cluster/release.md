@@ -2,7 +2,7 @@
 
 项目对外名称为 `pto-btop`，本地源码目录仍可保留 `ci-tools/btop-cluster`。
 独立仓库为 [pypto-tools/pto-btop](https://github.com/pypto-tools/pto-btop)，
-当前预发布版本为 `v0.5.0-alpha.1`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
+当前正式版本为 `v0.5.0`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
 已发布安装包以 [Releases](https://github.com/pypto-tools/pto-btop/releases) 为准。
 
 ## 包与兼容性
@@ -69,9 +69,9 @@ pto-btop/
 
 ```bash
 curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
-  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.5.0-alpha.1/setup.py
+  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.5.0/setup.py
 curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
-  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.5.0-alpha.1/setup.py.sha256
+  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.5.0/setup.py.sha256
 sha256sum --check setup.py.sha256
 HTTPS_PROXY=http://127.0.0.1:7892 \
   uv run --no-project --python 3.12 setup.py --proxy http://127.0.0.1:7892
@@ -168,8 +168,10 @@ AlmaLinux 的 Perl 构建依赖仍随仓库更新，不承诺跨日期生成的�
 2. 推送 `main`，确认两个架构都通过采集、HTTPS、终端及安装升级测试。
 3. 确认 `VERSION` 和 `docs/cluster/releases/vVERSION.md` 一致，再推送版本标签。
 4. 标签触发相同的构建、测试和打包。两个任务成功后，自动创建带两个安装包、
-   校验文件、包含两个包固定校验和的 `setup.py` 和说明的 **draft prerelease**。重复标签不会覆盖已有 Release。
-5. 检查草稿和实际机器验收结果，再明确发布预览版。第一版应标为预发布。
+   校验文件、包含两个包固定校验和的 `setup.py` 和说明的 **draft release**；带 `-alpha` 等后缀的标签额外标记为 prerelease。
+   重复标签不会覆盖已有 Release。
+5. 检查草稿、两个架构的包清单与 SHA-256、实际机器兼容性检查结果后再发布。
+   正式版本不带预发布后缀，并设为 Latest；预览版本保留 prerelease 标记。
 
 本机参考截图在 `.gitignore` 中保留，仅使用模拟数据生成的 `detail-preview.png`
 对外展示。上游原有 README、贡献规范和自动化配置归档于 `docs/upstream/`，

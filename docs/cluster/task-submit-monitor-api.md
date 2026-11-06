@@ -1,6 +1,6 @@
 # task-submit 监控查询接口约定
 
-状态：pto-btop 0.5.0-alpha.1 已接入 schema_version 1。
+状态：pto-btop 0.5.0 已接入 schema_version 1。
 本地查询只转发下列公开字段；daemon 身份验证和快照发布由 task-submit 负责。
 相关界面：[登录与卡资源设计](resources-monitoring.md)。
 

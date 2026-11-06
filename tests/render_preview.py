@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Export the actual demo ANSI frame as PNG; optional Pillow, no live host data.
 
-Usage: python tests/render_preview.py build/cluster/btop-cluster /tmp/detail.png [columns rows]
+Usage: python tests/render_preview.py build/cluster/btop-cluster /tmp/detail.png [columns rows] [--overview]
 """
 import re
 import subprocess
@@ -15,7 +15,8 @@ from terminal_support import screen
 
 width, height = (int(sys.argv[3]), int(sys.argv[4])) if len(sys.argv) >= 5 else (120, 36)
 frame = subprocess.check_output(
-    [sys.argv[1], "--demo", "--detail", "--once", "--width", str(width), "--height", str(height)], text=True
+    [sys.argv[1], "--demo", *([] if "--overview" in sys.argv else ["--detail"]),
+     "--once", "--width", str(width), "--height", str(height)], text=True
 )
 screen(frame, width, height)
 base = [(0, 0, 0), (205, 49, 49), (13, 188, 121), (229, 229, 16),

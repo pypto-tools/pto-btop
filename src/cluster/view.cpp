@@ -21,35 +21,126 @@ std::string at(int row, int col, const std::string& text) {
 	return Mv::to(row, col) + Theme::c("main_fg") + text;
 }
 
-std::string draw_card(const Host& host, const Rect& rect, bool selected, const Draw::Style& style) {
-	const auto& [x, y, width, height] = rect;
-	const auto color = Theme::c(selected ? "hi_fg" : "cpu_box");
-	auto out = Draw::createBox(x,y,width,height,color,true,safe_text(host.name,width-8),host.simulated ? "SIMULATED" : host.status,0,style);
-	auto write=[&](int row,const std::string& value) { if (row<y+height-1) out+=at(row,x+2,safe_text(value,width-4)); };
-	write(y+1,host.cpu_valid ? fmt::format("CPU {:5.1f}% / {} cores",host.cpu,host.cores) : "CPU N/A");
-	const int graph_height=std::clamp(height-12,1,6);
-	Draw::Graph graph(width-4,graph_height,"cpu",host.history,style.graph_symbol,false,false,0,0,style);
-	out+=Mv::to(y+2,x+2)+graph();
-	int row=y+2+graph_height;
-	write(row++,host.memory_valid ? fmt::format("MEM {:.0f}/{:.0f}GiB av:{:.0f}GiB",host.memory_used/gib,host.memory_total/gib,(host.memory_total-host.memory_used)/gib) : "MEM N/A");
-	Draw::Meter meter(width-4,"used");
-	out+=Mv::to(row++,x+2)+meter(static_cast<int>(host.memory_total ? 100.0*host.memory_used/host.memory_total : 0));
-	write(row++,fmt::format("LOAD {:.1f}/{:.1f}/{:.1f} core:{:.2f}",host.load[0],host.load[1],host.load[2],host.cores ? host.load[0]/host.cores : 0));
-	write(row++,card_summary(host));
-	std::string ids;
-	const auto card_state=resource_status(host,"cards");
-	if (card_state=="ok" or card_state=="partial") for (const auto& item : metric_items(metric_data(host,"cards"),"devices")) {
-		const auto state=item.at("state").get<std::string>();
-		const auto symbol=state=="free" ? "F" : state=="allocated" ? "H" : state=="reserved" ? "R" : state=="disabled" ? "X" : state=="error" ? "!" : "?";
-		ids+=item.at("id").get<std::string>()+":"+symbol+" ";
-	}
-	write(row++,ids.empty() ? "queue allocation / hardware health N/A" : ids);
-	write(row++,queue_summary(host));
-	write(row++,session_summary(host));
-	if (row<y+height-1) write(y+height-2,host.simulated ? "queue view | F free H held R reserved X off" : host.status+(host.error.empty() ? "" : ": "+host.error));
-	return out;
+std::string amount(const Protocol::Json& value,const char* key) {
+	const auto found=value.find(key);
+	return found!=value.end() and found->is_number_integer() ? std::to_string(found->get<std::uint64_t>()) : "--";
 }
 
+// Derive filled chip colors from the active theme, including 256-color and TTY modes.
+std::string chip_background(const std::string& color,const Draw::Style& style) {
+	const auto& escape=Theme::c(color);
+	if (style.tty_mode or escape.find("38;")==std::string::npos)
+		return color=="cpu_end" ? "\x1b[41m" : color=="cpu_mid" ? "\x1b[43m" : "\x1b[100m";
+	const auto accent=Theme::dec(color); const auto background=Theme::dec("main_bg");
+	std::array<int,3> blended;
+	for (int i=0;i<3;++i) blended[i]=std::clamp((std::max(0,background[i])*2+std::max(0,accent[i])*3)/5,0,255);
+	return Theme::dec_to_color(blended[0],blended[1],blended[2],escape.find("38;5;")!=std::string::npos,"bg");
+}
+
+std::string card_chip(const Protocol::Json& device,int x,int y,int id_width,bool rich,bool fresh,const Draw::Style& style) {
+	const auto state=fresh ? device.at("state").get<std::string>() : "unknown";
+	const bool held=state=="allocated" or state=="external", reserved=state=="reserved", failed=state=="error";
+	const std::string color=held or failed ? "cpu_end" : reserved ? "cpu_mid" : "graph_text";
+	const auto mark=state=="free" ? "F" : state=="allocated" ? "H" : reserved ? "R" : state=="disabled" ? "X" : failed ? "!" : state=="external" ? "E" : "?";
+	auto id=safe_text(device.at("id").get<std::string>(),id_width);
+	id=std::string(std::max(0,id_width-int(id.size())),' ')+id;
+	const auto label=rich ? " "+id+" "+mark+" " : id+mark;
+	const auto foreground=Theme::c(held or reserved or failed ? "selected_fg" : "main_fg");
+	const auto fill=chip_background(color,style);
+	const auto reset=Theme::c("main_bg")+Theme::c(color);
+	if (not rich) return Mv::to(y,x)+reset+"["+fill+foreground+label+reset+"]"+Theme::c("main_fg");
+	std::string top=style.tty_mode ? "+" : "┌", bottom=style.tty_mode ? "+" : "└";
+	for (int i=0;i<int(label.size());++i) {
+		top+=style.tty_mode ? "-" : i%2 ? "┴" : "─";
+		bottom+=style.tty_mode ? "-" : i%2 ? "┬" : "─";
+	}
+	top+=style.tty_mode ? "+" : "┐"; bottom+=style.tty_mode ? "+" : "┘";
+	const auto side=style.tty_mode ? "|" : "│";
+	return Mv::to(y,x)+reset+top+Mv::to(y+1,x)+side+fill+foreground+label+reset+side+
+		Mv::to(y+2,x)+bottom+Theme::c("main_fg");
+}
+
+struct ChipGrid {
+	bool rich;
+	int id_width,per_row,rows,height;
+};
+ChipGrid chip_grid(const Host& host,const Rect& rect) {
+	const int height=rect.height, inner=rect.width-4;
+	const auto& devices=metric_items(metric_data(host,"cards"),"devices");
+	int id_width=2;
+	for (const auto& device:devices) id_width=std::max(id_width,std::min(8,int(device.at("id").get_ref<const std::string&>().size())));
+	const bool rich=height>=20 and inner>=60;
+	const int tile_width=id_width+(rich ? 6 : 3), tile_height=rich ? 3 : 1;
+	int per_row=std::max(1,(inner+1)/(tile_width+1));
+	if (per_row>=8) per_row=per_row/4*4;
+	const int needed=std::max(1,(int(devices.size())+per_row-1)/per_row);
+	const int rows=std::min(needed,std::max(1,(height-13)/tile_height));
+	const int grid_height=devices.empty() ? 1 : rows*tile_height;
+	return {rich,id_width,per_row,rows,grid_height};
+}
+
+std::string draw_card(const Host& host, const Rect& rect, bool selected, const Draw::Style& style,int reserved_grid_height) {
+	const auto& [x,y,width,height]=rect;
+	const int left=x+2, inner=width-4;
+	auto out=Draw::createBox(x,y,width,height,Theme::c(selected ? "hi_fg" : "cpu_box"),true,
+		safe_text(host.name,width-8),host.simulated ? "SIMULATED" : host.status,0,style);
+	auto write=[&](int row,const std::string& value,const std::string& color="main_fg") {
+		if (row>y and row<y+height-1) out+=Mv::to(row,left)+Theme::c("main_bg")+Theme::c(color)+safe_text(value,inner);
+	};
+	const auto state=resource_status(host,"cards");
+	const bool fresh=state=="ok" or state=="partial";
+	const auto& data=metric_data(host,"cards"); const auto& devices=metric_items(data,"devices");
+	const auto [rich,id_width,per_row,rows,natural_height]=chip_grid(host,rect);
+	const int tile_width=id_width+(rich ? 6 : 3), tile_height=rich ? 3 : 1;
+	const int grid_height=std::max(natural_height,reserved_grid_height);
+	const int graph_height=std::clamp(height-12-grid_height,1,6);
+	write(y+1,host.cpu_valid ? fmt::format("CPU {:5.1f}%  / {} cores",host.cpu,host.cores) : "CPU -- / awaiting sample");
+	const auto load=fmt::format("load/core {:.2f}",host.cores ? host.load[0]/host.cores : 0);
+	out+=Mv::to(y+1,left+inner-int(load.size()))+Theme::c("graph_text")+load;
+	Draw::Graph graph(inner,graph_height,"cpu",host.history,style.graph_symbol,false,false,0,0,style);
+	out+=Mv::to(y+2,left)+graph();
+	write(y+2+graph_height,host.memory_valid ? fmt::format("MEM {:.0f}/{:.0f} GiB",host.memory_used/gib,host.memory_total/gib) : "MEM --");
+	const auto available=host.memory_valid ? fmt::format("{:.0f} GiB available",(host.memory_total-host.memory_used)/gib) : "-- available";
+	out+=Mv::to(y+2+graph_height,left+inner-int(available.size()))+Theme::c("cached_mid")+available;
+	Draw::Meter meter(inner,"used");
+	out+=Mv::to(y+3+graph_height,left)+meter(static_cast<int>(host.memory_total ? 100.0*host.memory_used/host.memory_total : 0));
+	const int heading=y+5+graph_height, stats_y=y+height-5;
+	std::string capacity="NPU  "+state, owner="";
+	if (fresh) {
+		capacity="NPU  "+amount(data.at("summary"),"free")+" / "+amount(data.at("summary"),"total")+" FREE"+(state=="partial" ? " [partial]" : "");
+		owner="OWNERS "+amount(data.at("summary"),"occupying_users");
+	}
+	const int visible=std::min(int(devices.size()),rows*per_row);
+	if (visible<int(devices.size())) owner=fmt::format("+{} in details",devices.size()-visible);
+	write(heading,capacity,"title");
+	if (int(capacity.size()+owner.size())+2<inner) out+=Mv::to(heading,left+inner-int(owner.size()))+Theme::c("graph_text")+owner;
+	if (devices.empty()) write(heading+1,"No card inventory available","graph_text");
+	for (int i=0;i<visible;++i) out+=card_chip(devices[i],left+(i%per_row)*(tile_width+1),heading+1+(i/per_row)*tile_height,id_width,rich,fresh,style);
+	const auto users_state=resource_status(host,"sessions"); const auto& users=metric_data(host,"sessions");
+	const bool users_fresh=users_state=="ok" or users_state=="partial";
+	const auto user_count=users_fresh ? (users_state=="partial" ? "~" : "")+amount(users,"users") : "--";
+	const auto session_count=users_fresh ? (users_state=="partial" ? "~" : "")+amount(users,"sessions") : "--";
+	const auto run=fresh ? amount(data.at("scheduler"),"running_tasks") : "--";
+	const auto limit=fresh ? amount(data.at("scheduler"),"max_concurrent") : "--";
+	const auto wait=fresh ? amount(data.at("scheduler"),"pending_tasks") : "--";
+	const std::array<std::string,4> labels={"USERS","SESSIONS","RUNNING","WAITING"}, values={user_count,session_count,run,wait}, colors={"cached_mid","download_end","cpu_start","cpu_mid"};
+	const int stat_width=(inner-3)/4;
+	for (int i=0;i<4;++i) {
+		const int sx=left+i*(stat_width+1), sw=i==3 ? left+inner-sx : stat_width;
+		out+=Draw::createBox(sx,stats_y,sw,3,Theme::c("div_line"),true,labels[i],"",0,style);
+		out+=Mv::to(stats_y+1,sx+2)+Theme::c(values[i]=="--" ? "graph_text" : colors[i])+safe_text(values[i],sw-4);
+		if (i==2) {
+			const auto caption="LIMIT "+limit;
+			out+=Mv::to(stats_y+2,sx+2)+Theme::c("main_bg")+Theme::c("graph_text")+(int(caption.size())<=sw-4 ? caption : "LIMIT...");
+		}
+	}
+	const std::array<std::string,4> legend={"F Free","H Held","R Reserved","X Off"}, keys={"graph_text","cpu_end","cpu_mid","graph_text"};
+	int cursor=left;
+	for (int i=0;i<4;++i) {
+		out+=Mv::to(y+height-2,cursor)+Theme::c(keys[i])+legend[i]; cursor+=legend[i].size()+3;
+	}
+	return out+Theme::c("main_bg")+Theme::c("main_fg");
+}
 
 }
 
@@ -111,23 +202,26 @@ void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms) {
 			{"processes",Protocol::group({{"items",processes},{"total_visible",40},{"matched",40},{"returned",40},{"truncated",false}},stamp,interval_ms)}
 		};
 		Json devices=Json::array();
-		Json counts{{"total",8},{"free",0},{"allocated",0},{"reserved",0},{"disabled",0},{"external",0},{"error",0},{"unknown",0},{"occupying_users",1}};
-		for (int id=0; id<8; ++id) {
-			const std::string state=i==1 ? (id<6 ? "free" : "allocated") : i==2 ? "allocated" :
+		const int device_count=(i==1 or i==2) ? 16 : 8;
+		Json counts{{"total",device_count},{"free",0},{"allocated",0},{"reserved",0},{"disabled",0},{"external",0},{"error",0},{"unknown",0},{"occupying_users",1}};
+		for (int id=0; id<device_count; ++id) {
+			const std::string state=i==1 ? (id<device_count-2 ? "free" : "allocated") : i==2 ? "allocated" :
 				(id==2 or id==3 or id==5) ? "allocated" : id==6 ? "reserved" : id==7 ? "disabled" : "free";
 			counts[state]=counts[state].get<int>()+1;
 			Json allocation=nullptr, reservation=nullptr;
 			if (state=="allocated") allocation={{"task_id","task-demo-running"},{"user","developer"},{"uid",1000},{"started_at","2026-01-01T10:00:00Z"},{"elapsed_seconds",760}};
 			if (state=="reserved" or (i!=1 and i!=2 and id==5)) reservation={{"task_id","task-demo-waiting"},{"user","builder"},{"uid",1001},{"requested_devices",2}};
-			devices.push_back({{"id",std::to_string(id)},{"group_id",id<4 ? "g0" : "g1"},{"pool_eligible",state!="disabled"},
+			devices.push_back({{"id",std::to_string(id)},{"group_id","g"+std::to_string(id/4)},{"pool_eligible",state!="disabled"},
 				{"state",state},{"reason_codes",state=="free" ? Json::array() : Json::array({state})},{"allocation",allocation},{"reservation",reservation},{"health","unknown"}});
 		}
 		groups["cards"]=Protocol::group({{"schema_version",1},{"producer",{{"name","pto-task"},{"version","demo"}}},{"boot_id","demo-boot"},
 			{"snapshot_seq",tick},{"observed_at","2026-01-01T10:12:40Z"},{"age_ms",0},{"status","ok"},{"reason",nullptr},{"inventory_complete",true},
 			{"external_detection","unsupported"},{"scheduler",{{"state","running"},{"mode","pool_aware_reservation"},{"accepting_submissions",true},
 			{"dispatching",true},{"running_tasks",1},{"pending_tasks",i==1 ? 0 : 2},{"max_concurrent",8},{"reason",nullptr}}},{"devices",devices},{"summary",counts}},stamp,5000);
-		groups["sessions"]=Protocol::group({{"source","utmpx"},{"users",2},{"sessions",3},{"age_ms",0},
-			{"items",Json::array({{{"user","developer"},{"sessions",2},{"first_login_at",1760000000}},{{"user","builder"},{"sessions",1},{"first_login_at",1760000500}}})}},stamp,5000);
+		const std::array<std::string,7> names={"developer","builder","reviewer","runner","alice","bob","charlie"};
+		const int user_count=std::array{2,4,7,3}[i]; Json logins=Json::array();
+		for (int user=0;user<user_count;++user) logins.push_back({{"user",names[user]},{"sessions",user==0 ? 2 : 1},{"first_login_at",1760000000+user*500}});
+		groups["sessions"]=Protocol::group({{"source","utmpx"},{"users",user_count},{"sessions",user_count+1},{"age_ms",0},{"items",logins}},stamp,5000);
 		groups["filesystems"]["data"]["items"].push_back({{"mount","/data"},{"device","259:1"},{"total_bytes",2199023255552ULL},{"used_bytes",1209462790553ULL},{"available_bytes",989560464999ULL}});
 		groups["disks"]["data"]["items"].push_back({{"name","nvme1n1"},{"id","259:1"},{"read_bytes_per_sec",16777216*(1+std::sin(tick*0.09))},{"write_bytes_per_sec",4194304},{"activity_pct",65}});
 		const Protocol::ProcessFilter filter(host.filter);
@@ -160,8 +254,10 @@ std::string render(const std::vector<Host>& hosts, int width, int height,
 		const std::string controls="1-4 Host  Esc Overview  ? Help  q Quit";
 		out += at(1,width-1-static_cast<int>(controls.size()),controls);
 	} else if (geometry.layout == Layout::cards) {
-		for (std::size_t i = 0; i < hosts.size(); ++i)
-			out += draw_card(hosts[i], geometry.cards[i], i == static_cast<std::size_t>(selected), style);
+		int grid_height=0;
+		for (std::size_t i=0;i<hosts.size();++i) grid_height=std::max(grid_height,chip_grid(hosts[i],geometry.cards[i]).height);
+		for (std::size_t i=0;i<hosts.size();++i)
+			out+=draw_card(hosts[i],geometry.cards[i],i==static_cast<std::size_t>(selected),style,grid_height);
 		out += at(height - 1, 2, "Tab Select   Enter Details   1-4 Host   u Users   t Theme   q Quit");
 	} else {
 		out += at(3,2,"HOST       CPU    MEM used/total GiB    NPU free  WAIT   USERS/SESS");
