@@ -20,6 +20,7 @@ original_run = subprocess.run
 services = {}
 enabled = set()
 unit_verified = []
+fail_next = set()
 
 
 def manager(command, *args, **kwargs):
@@ -35,6 +36,9 @@ def manager(command, *args, **kwargs):
         return subprocess.CompletedProcess(command, 1)
     action = command[1]
     name = command[-1]
+    if action == 'restart' and name in fail_next:
+        fail_next.remove(name)
+        raise subprocess.CalledProcessError(1, command)
     code = 0
     if action == 'is-active':
         code = 0 if name in services and services[name].poll() is None else 3
@@ -99,6 +103,22 @@ try:
         assert before == {p: Path(p).read_bytes() for p in before}
         assert enabled == {'pto-btop-server.service', 'pto-btop-agent.service'}
         assert len(unit_verified) == 4
+        old.rename('/opt/preserved-private-install')
+        update_args = [script, '--update', '--archive', '/container-test/release.tar.gz']
+        with mock.patch.object(deploy, 'systemd_check'), \
+             mock.patch.object(sys, 'argv', update_args), \
+             mock.patch.object(subprocess, 'run', side_effect=manager):
+            deploy.main()  # Updating must not require the original home/config.
+            previous_state = (deploy.ROOT / 'state/system-deployment.json').read_bytes()
+            fail_next.add('pto-btop-agent.service')
+            try:
+                deploy.main()
+            except subprocess.CalledProcessError:
+                pass
+            else:
+                raise AssertionError('Injected restart failure was ignored')
+            assert (deploy.ROOT / 'state/system-deployment.json').read_bytes() == previous_state
+        original_run([str(deploy.UPDATE_COMMAND), '--help'], check=True, stdout=subprocess.DEVNULL)
         assert set(p.name for p in deploy.PUBLIC.iterdir()) == {'client.json', 'viewer.token', 'ca.pem'}
         account = pwd.getpwnam('pto-btop')
         for role in ('server', 'agent'):
@@ -113,7 +133,7 @@ try:
         assert result.returncode == 0, result.stderr
         assert 'cpu' in result.stdout.lower() and 'proc' in result.stdout.lower()
         assert not list(Path('/tmp').glob('pto-btop-viewer-*'))
-        print('PASS: root installation, non-root services, ordinary-user HTTPS overview/detail, private token permissions, old-process migration and unchanged source enrollment')
+        print('PASS: root installation, ordinary-user HTTPS overview/detail, private credentials, legacy migration, updates without original home, restart-failure recovery, and preserved enrollment')
 finally:
     for process in list(services.values()) + initial:
         if process.poll() is None:

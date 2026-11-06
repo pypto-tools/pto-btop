@@ -55,10 +55,18 @@ and its `.sha256` file into that directory. Verify the checksum, then run
 [uv and enrollment installation instructions](docs/cluster/release.md#已有节点配置时直接安装)
 if the system Python is older than 3.10. Existing enrollment credentials are reused.
 
-To share the monitor with every local login account, use the
-[system-service deployment](docs/cluster/system-service.md). Its Python 3.9+
-installer reuses enrollment, installs the verified v0.5.0 release, and provides
-a global `pto-btop` command plus optional systemd activation.
+To share the monitor with every local login account, run the one-command
+installer from the account with the existing private installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pypto-tools/pto-btop/main/install.sh | bash
+```
+
+It requests sudo, detects the hub/node role and architecture, preserves enrollment,
+and activates system services. Later run `sudo pto-btop-update` on each machine to
+install GitHub Latest; an already-current deployment is left running. Python 3.9+
+is sufficient. See [system-service deployment](docs/cluster/system-service.md)
+for proxies, verification and recovery.
 
 ## Connect the machines
 

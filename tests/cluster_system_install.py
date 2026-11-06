@@ -4,13 +4,17 @@
 import ast
 import importlib.util
 import json
+import hashlib
+import io
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
+from types import SimpleNamespace
 
 SCRIPT = Path(sys.argv.pop(1)) if len(sys.argv) > 1 and sys.argv[1].endswith('.py') else Path(__file__).resolve().parents[1] / 'scripts/system-install.py'
 spec = importlib.util.spec_from_file_location('system_install', SCRIPT)
@@ -29,7 +33,8 @@ class DeploymentTests(unittest.TestCase):
         self.units = self.base / 'units'
         self.command = self.base / 'pto-btop'
         patch = mock.patch.multiple(deploy, ROOT=self.root, PUBLIC=self.public,
-                                    LIBEXEC=self.bin, UNITS=self.units, COMMAND=self.command)
+                                    LIBEXEC=self.bin, UNITS=self.units, COMMAND=self.command,
+                                    UPDATE_COMMAND=self.base / 'pto-btop-update')
         patch.start()
         self.addCleanup(patch.stop)
         self.source = self.base / 'source'
@@ -79,6 +84,58 @@ class DeploymentTests(unittest.TestCase):
         path.write_text(json.dumps(data))
         with self.assertRaisesRegex(ValueError, 'Symlink'):
             deploy.enrollment(self.source, False)
+
+    def test_update_reuses_system_config_without_original_home(self):
+        import shutil
+        expected = deploy.enrollment(self.source, True)
+        for path, data in expected.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        shutil.rmtree(self.source)
+        self.assertEqual(deploy.enrollment(self.root, True, system=True), expected)
+
+    def test_latest_version_does_not_download_package_or_restart(self):
+        with mock.patch.object(deploy, 'latest_version', return_value='0.5.0'), \
+             mock.patch.object(deploy, 'download') as download, \
+             mock.patch.object(deploy.platform, 'machine', return_value='aarch64'):
+            result = deploy.fetch_package(SimpleNamespace(archive=None, proxy=None), self.base, '0.5.0')
+        self.assertEqual(result, (None, '0.5.0'))
+        download.assert_not_called()
+
+    def test_prerelease_and_automatic_downgrade_are_rejected(self):
+        args = SimpleNamespace(archive=None, proxy=None)
+        reply = subprocess.CompletedProcess(['curl'], 0,
+                  stdout='https://github.com/pypto-tools/pto-btop/releases/tag/v0.5.0-alpha.1')
+        with mock.patch.object(deploy.subprocess, 'run', return_value=reply):
+            with self.assertRaisesRegex(ValueError, 'stable'):
+                deploy.latest_version(None)
+        with mock.patch.object(deploy, 'latest_version', return_value='0.5.0'), \
+             mock.patch.object(deploy.platform, 'machine', return_value='aarch64'):
+            with self.assertRaisesRegex(ValueError, 'downgrade'):
+                deploy.fetch_package(args, self.base, '0.6.0')
+
+    def test_new_stable_version_downloads_and_checks_matching_archive(self):
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode='w:gz') as archive:
+            member = tarfile.TarInfo('pto-btop-0.5.1-linux-arm64/example.txt')
+            member.size = 7
+            archive.addfile(member, io.BytesIO(b'fixture'))
+        data = output.getvalue()
+        checksum = hashlib.sha256(data).hexdigest()
+        calls = []
+        def download(url, path, limit, proxy):
+            calls.append(url)
+            if url.endswith('.sha256'):
+                path.write_text(checksum + '  pto-btop-0.5.1-linux-arm64.tar.gz\n')
+            else:
+                path.write_bytes(data)
+        with mock.patch.object(deploy, 'download', side_effect=download), \
+             mock.patch.object(deploy, 'latest_version', return_value='0.5.1'), \
+             mock.patch.object(deploy.platform, 'machine', return_value='aarch64'):
+            package, version = deploy.fetch_package(SimpleNamespace(archive=None, proxy=None), self.base, '0.5.0')
+        self.assertEqual(version, '0.5.1')
+        self.assertEqual((package / 'example.txt').read_bytes(), b'fixture')
+        self.assertEqual(len(calls), 2)
 
     def test_refuses_changed_enrollment_and_unknown_commands(self):
         files = deploy.enrollment(self.source, False)
@@ -197,6 +254,13 @@ time.sleep(20)
     def test_python_39_syntax(self):
         ast.parse(SCRIPT.read_text(), feature_version=(3, 9))
         ast.parse(deploy.wrapper().decode(), feature_version=(3, 9))
+
+    def test_bootstrap_checksum_matches_installer(self):
+        bootstrap = SCRIPT.resolve().parents[1] / 'install.sh'
+        if not bootstrap.exists():
+            self.skipTest('Run from the repository to verify the bootstrap')
+        self.assertIn(hashlib.sha256(SCRIPT.read_bytes()).hexdigest(), bootstrap.read_text())
+        subprocess.run(['bash', '-n', str(bootstrap)], check=True)
 
 
 if __name__ == '__main__':

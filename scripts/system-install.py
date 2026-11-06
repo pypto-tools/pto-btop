@@ -15,6 +15,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import pwd
+import re
 import runpy
 import select
 import shutil
@@ -33,6 +34,7 @@ HASHES = {
 ROOT = Path("/home/pypto-tools/pto-btop")
 PUBLIC = Path("/etc/pto-btop")
 COMMAND = Path("/usr/local/bin/pto-btop")
+UPDATE_COMMAND = Path("/usr/local/bin/pto-btop-update")
 LIBEXEC = Path("/usr/local/libexec/pto-btop")
 UNITS = Path("/etc/systemd/system")
 ACCOUNT = "pto-btop"
@@ -64,7 +66,7 @@ def json_bytes(value):
     return (json.dumps(value, indent=2) + "\n").encode()
 
 
-def enrollment(source, hub):
+def enrollment(source, hub, system=False):
     """Return destination payloads without exposing credential contents."""
     source = source.resolve(strict=True)
     files = {}
@@ -72,16 +74,17 @@ def enrollment(source, hub):
         ("agent", "agent.json", ROOT / "config/agent"),
         ("viewer", "client.json", PUBLIC),
     ):
-        config_path = source / "config/node" / source_name
+        config_path = (PUBLIC / source_name if role == "viewer" else source / "config/agent" / source_name) if system else source / "config/node" / source_name
         settings = json.loads(read_file(config_path))
         if settings.get("version") != 1:
             raise ValueError("Only enrollment version 1 is supported")
         for key, filename in (("ca_file", "ca.pem"), ("token_file", role + ".token")):
-            files[dest / filename] = reference(config_path, settings, key, source)
+            boundary = PUBLIC if system and role == "viewer" else source
+            files[dest / filename] = reference(config_path, settings, key, boundary)
             settings[key] = filename
         files[dest / source_name] = json_bytes(settings)
     if hub:
-        config_path = source / "config/enrollment/server/server.json"
+        config_path = source / ("config/server/server.json" if system else "config/enrollment/server/server.json")
         settings = json.loads(read_file(config_path))
         if ipaddress.ip_address(settings["listen"]).is_unspecified:
             raise ValueError("Keep the hub bound to its existing specific NetBird address")
@@ -155,6 +158,11 @@ def unit(role):
             "\n[Install]\nWantedBy=multi-user.target\n").encode()
 
 
+def update_wrapper():
+    return ("#!/bin/sh\n" + MARKER +
+            f'exec /usr/bin/python3 "{ROOT}/admin/system-install.py" --update "$@"\n').encode()
+
+
 def ordinary_parents(path):
     for parent in (path, *path.parents):
         if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
@@ -171,7 +179,7 @@ def check_targets(files, hub):
         if path.exists() or path.is_symlink():
             if read_file(path) != data:
                 raise ValueError(f"Existing enrollment differs; refusing to replace: {path}")
-    managed = {COMMAND: wrapper()}
+    managed = {COMMAND: wrapper(), UPDATE_COMMAND: update_wrapper()}
     for role in ("server", "agent") if hub else ("agent",):
         managed[UNITS / f"pto-btop-{role}.service"] = unit(role)
     for path in managed:
@@ -181,10 +189,10 @@ def check_targets(files, hub):
     return managed
 
 
-def verify_archive(archive, arch, dest):
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != HASHES[arch]:
+def verify_archive(archive, arch, dest, version=VERSION, digest=None):
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != (digest or HASHES[arch]):
         raise ValueError("Release SHA-256 mismatch; nothing installed")
-    name = f"pto-btop-{VERSION}-linux-{arch}"
+    name = f"pto-btop-{version}-linux-{arch}"
     with tarfile.open(archive) as package:
         for member in package.getmembers():
             p = PurePosixPath(member.name)
@@ -201,23 +209,63 @@ def verify_archive(archive, arch, dest):
     return dest / name
 
 
-def fetch_package(args, temporary):
+def download(url, destination, limit, proxy):
+    command = ["curl", "--disable", "--fail", "--silent", "--show-error", "--location",
+               "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "15",
+               "--max-time", "180", "--retry", "2", "--retry-delay", "1",
+               "--max-filesize", str(limit), "--output", str(destination), "--url", url]
+    if proxy:
+        command += ["--proxy", proxy, "--noproxy", ""]
+    status = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    if status:
+        raise ValueError(f"GitHub download failed (curl exit {status}); check the proxy and HTTPS connection")
+    if destination.stat().st_size > limit:
+        raise ValueError("Downloaded file exceeds its size limit")
+
+
+def latest_version(proxy):
+    # The public Latest redirect avoids the low unauthenticated API rate limit.
+    command = ["curl", "--disable", "--fail", "--silent", "--show-error", "--location",
+               "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "15",
+               "--max-time", "60", "--retry", "2", "--retry-delay", "1",
+               "--max-filesize", str(2 * 1024 * 1024), "--output", os.devnull,
+               "--write-out", "%{url_effective}", "--url", "https://github.com/pypto-tools/pto-btop/releases/latest"]
+    if proxy:
+        command += ["--proxy", proxy, "--noproxy", ""]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    if result.returncode:
+        raise ValueError(f"Cannot resolve GitHub Latest (curl exit {result.returncode}); check the proxy")
+    match = re.fullmatch(r"https://github\.com/pypto-tools/pto-btop/releases/tag/v([0-9]+\.[0-9]+\.[0-9]+)", result.stdout.strip())
+    if not match:
+        raise ValueError("GitHub Latest did not resolve to a stable release in this repository")
+    return match.group(1)
+
+
+def fetch_package(args, temporary, installed_version=None):
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine())
     if platform.system() != "Linux" or arch is None:
         raise ValueError("Requires Linux amd64 or arm64")
     if args.archive:
         archive = args.archive
+        version, digest = VERSION, HASHES[arch]
     else:
+        version = latest_version(args.proxy)
+        tag = 'v' + version
+        name = f"pto-btop-{version}-linux-{arch}.tar.gz"
+        if installed_version and tuple(map(int, version.split('.'))) < tuple(map(int, installed_version.split('.'))):
+            raise ValueError("Latest is older than the installed version; refusing automatic downgrade")
+        if version == installed_version and not getattr(args, 'force', False) and not getattr(args, 'check', False):
+            return None, version
+        base = f"https://github.com/pypto-tools/pto-btop/releases/download/{tag}/"
+        checksum = temporary / "package.sha256"
+        download(base + name + ".sha256", checksum, 4096, args.proxy)
+        fields = checksum.read_text().split()
+        if len(fields) != 2 or fields[1] != name or not re.fullmatch(r"[a-f0-9]{64}", fields[0]):
+            raise ValueError("Invalid release checksum file")
+        digest = fields[0]
         archive = temporary / "package.tar.gz"
-        url = f"https://github.com/pypto-tools/pto-btop/releases/download/v{VERSION}/pto-btop-{VERSION}-linux-{arch}.tar.gz"
-        command = ["curl", "--disable", "--fail", "--silent", "--show-error", "--location",
-                   "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "15",
-                   "--max-time", "180", "--max-filesize", str(64 * 1024 * 1024), "--output", str(archive), url]
-        if args.proxy:
-            command += ["--proxy", args.proxy, "--noproxy", ""]
-        if subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
-            raise ValueError("GitHub download failed; check the proxy and HTTPS connection")
-    return verify_archive(archive, arch, temporary)
+        download(base + name, archive, 64 * 1024 * 1024, args.proxy)
+    return verify_archive(archive, arch, temporary, version, digest), version
 
 
 def atomic_file(path, data, mode, gid=0, uid=0):
@@ -353,12 +401,34 @@ def systemd_check():
         raise ValueError("This deployment requires systemd as PID 1")
 
 
+def default_source():
+    home = Path(pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir) if os.environ.get("SUDO_USER") else Path.home()
+    return home / ".local/share/pto-btop"
+
+
+def deployment_state():
+    path = ROOT / "state/system-deployment.json"
+    if not path.exists():
+        return None
+    ordinary_parents(path.parent)
+    if path.stat().st_uid != 0 or path.stat().st_mode & 0o077:
+        raise ValueError("System deployment state must be root-owned and private")
+    data = json.loads(read_file(path))
+    if data.get("format") != 1 or not isinstance(data.get("hub"), bool) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", data.get("version", "")):
+        raise ValueError("Invalid system deployment state")
+    return data
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, required=True, help="Existing private installation, not the config bundle")
-    parser.add_argument("--hub", action="store_true", help="Also install the central server on this machine")
+    parser.add_argument("--source-root", type=Path, help="Existing private installation; auto-detected for the invoking account")
+    role = parser.add_mutually_exclusive_group()
+    role.add_argument("--hub", action="store_const", const=True, default=None, dest="hub", help="Install the central server too; normally auto-detected")
+    role.add_argument("--node", action="store_const", const=False, dest="hub", help="Install only the agent and public viewer")
+    parser.add_argument("--update", action="store_true", help="Update the managed system deployment to GitHub Latest and restart")
+    parser.add_argument("--force", action="store_true", help="Reinstall/restart even when already on the latest release")
     parser.add_argument("--proxy", help="Proxy URL for GitHub package downloads")
-    parser.add_argument("--archive", type=Path, help="Use a previously downloaded official archive")
+    parser.add_argument("--archive", type=Path, help="Offline installation using the pinned official v0.5.0 archive")
     parser.add_argument("--check", action="store_true", help="Read-only preflight; does not require sudo")
     parser.add_argument("--activate", action="store_true", help="Migrate old services and enable/start system services")
     args = parser.parse_args()
@@ -368,19 +438,39 @@ def main():
         parser.error("Python 3.9 or newer is required")
     if not args.check and os.geteuid() != 0:
         parser.error("Run installation with sudo; --check is available without sudo")
-    source = args.source_root.resolve(strict=True)
-    if source == ROOT:
-        parser.error("Use the original private installation as --source-root")
-    roles = ("server", "agent") if args.hub else ("agent",)
+    if platform.system() != "Linux" or platform.machine() not in ("x86_64", "aarch64"):
+        raise ValueError("Requires Linux amd64 or arm64")
     systemd_check()
-    files = enrollment(source, args.hub)
-    managed = check_targets(files, args.hub)
-    processes = {role: existing_background(source, role) for role in roles}
-    user_services = [s for role in roles if (s := user_service(source, role))]
+    state = deployment_state()
+    if args.update and state is None:
+        parser.error("No managed deployment found; run the one-command installer first")
+    updating = state is not None
+    if args.update and not args.check:
+        args.activate = True
+    source = ROOT if updating else (args.source_root or default_source()).resolve(strict=True)
+    if updating:
+        if args.hub is not None and args.hub != state['hub']:
+            raise ValueError("The requested role differs from the installed system deployment")
+        hub = state['hub']
+    else:
+        hub = args.hub if args.hub is not None else (source / 'config/enrollment/server/server.json').is_file()
+        if source == ROOT:
+            raise ValueError("System state is missing; inspect the existing system deployment")
+    roles = ("server", "agent") if hub else ("agent",)
+    files = enrollment(source, hub, system=updating)
+    managed = check_targets(files, hub)
+    legacy = None if updating and state.get('activated') else Path(state['legacy_source']) if updating else source
+    processes = {role: existing_background(legacy, role) for role in roles} if legacy else {}
+    user_services = [s for role in roles if (s := user_service(legacy, role))] if legacy else []
     if any(processes.values()):
         os.close(pidfd_open(os.getpid()))
     previous_release = os.readlink(ROOT / "app/current") if (ROOT / "app/current").is_symlink() else None
     previous_units = {path: read_file(path) for path in managed if path.parent == UNITS and path.exists()}
+    admin = ROOT / 'admin/system-install.py'
+    ordinary_parents(admin.parent)
+    if admin.exists() and not updating:
+        raise ValueError("Refusing to replace an unmanaged administrator entrypoint")
+    previous_admin = read_file(admin) if admin.exists() else None
     previously_active = [f"pto-btop-{role}.service" for role in roles
                          if subprocess.run(["systemctl", "is-active", "--quiet", f"pto-btop-{role}.service"],
                                            capture_output=True).returncode == 0]
@@ -388,11 +478,19 @@ def main():
                           if subprocess.run(["systemctl", "is-enabled", "--quiet", f"pto-btop-{role}.service"],
                                             capture_output=True).returncode == 0]
     with tempfile.TemporaryDirectory(prefix="pto-btop-system-") as temporary:
-        package = fetch_package(args, Path(temporary))
+        installed_version = state['version'] if updating else None
+        if updating and not state.get('activated'):
+            args.force = True
+        package, version = fetch_package(args, Path(temporary), installed_version)
+        if package is None:
+            print(f"Already on the latest stable release ({version}); services unchanged.")
+            return
         installer = runpy.run_path(str(package / "install.py"))
         metadata, digest = installer["validate"](package)
+        if metadata['version'] != version:
+            raise ValueError("Release version does not match the package manifest")
         if args.check:
-            print(f"Checks passed: v{VERSION}, {'hub + agent' if args.hub else 'agent'}, all local users may view.")
+            print(f"Checks passed: v{version}, {'hub + agent' if hub else 'agent'}, all local users may view.")
             print("Enrollment, processes and system files unchanged. Re-run with sudo and --activate to deploy.")
             return
         os.umask(0o022)
@@ -424,7 +522,12 @@ def main():
             atomic_file(path, data, 0o644 if public else 0o600,
                         0 if public else account.pw_gid, 0 if public else account.pw_uid)
         for path, data in managed.items():
-            atomic_file(path, data, 0o755 if path == COMMAND else 0o644)
+            atomic_file(path, data, 0o755 if path in (COMMAND, UPDATE_COMMAND) else 0o644)
+        # Releases may carry an updated administrator entrypoint. v0.5.0 predates
+        # this helper, so bootstrap it from this checksum-verified installer.
+        released_helper = package / 'scripts/system-install.py'
+        helper = read_file(released_helper) if released_helper.is_file() and '--update' in released_helper.read_text() else Path(__file__).read_bytes()
+        atomic_file(admin, helper, 0o755)
         run("systemd-analyze", "verify", *(str(UNITS / f"pto-btop-{role}.service") for role in roles))
         run("systemctl", "daemon-reload")
         # Exercise the global entrypoint as an unrelated, unprivileged account.
@@ -439,6 +542,8 @@ def main():
                     os.replace(switch, ROOT / "app/current")
                 for path, data in previous_units.items():
                     atomic_file(path, data, 0o644)
+                if previous_admin is not None:
+                    atomic_file(admin, previous_admin, 0o755)
                 for role in roles:
                     name = f"pto-btop-{role}.service"
                     if name not in previously_enabled:
@@ -452,8 +557,14 @@ def main():
                 print("Services started; not all monitored hosts are ONLINE yet. Run pto-btop --check after their agents reconnect.")
         else:
             print("Installed only. Re-run with --activate to migrate and start the system services.")
+        atomic_file(ROOT / 'state/system-deployment.json', json_bytes({
+            'format': 1, 'hub': hub, 'version': version,
+            'activated': bool(args.activate or (state and state.get('activated'))),
+            'legacy_source': str(legacy) if legacy else None,
+        }), 0o600)
     print("All local users: /usr/local/bin/pto-btop")
-    print("View logs: journalctl -u pto-btop-agent" + (" -u pto-btop-server" if args.hub else ""))
+    print("Next update: sudo pto-btop-update [--proxy URL]")
+    print("View logs: journalctl -u pto-btop-agent" + (" -u pto-btop-server" if hub else ""))
     print("Existing private enrollment was preserved. The public config contains only a read-only viewer token and CA certificate.")
 
 
