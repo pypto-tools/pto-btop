@@ -131,7 +131,7 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         denied["session_id"] = "old-session"
         denied["seq"] = 3
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], denied, expected=409)
-        assert set(registration["metric_groups"]) == {"cards", "sessions"}
+        assert set(registration["metric_groups"]) == {"cards", "sessions", "card_usage"}
         cards = json.loads((Path(initializer).parents[1] / "docs/cluster/examples/task-submit-monitor.example.json").read_text())
         body["seq"] = 3
         body["groups"]["cards"] = group(cards)
@@ -140,17 +140,26 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], body)
         stored = api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["snapshot"]["groups"]
         assert stored["cards"]["data"]["devices"] == cards["devices"]
-        for case in ("counts", "duplicate-login", "unknown-group"):
+        usage = json.loads((Path(initializer).parents[1] / "docs/cluster/examples/task-submit-usage-monitor.example.json").read_text())
+        body["seq"] = 4
+        body["groups"]["card_usage"] = group(usage)
+        api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], body)
+        stored = api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["snapshot"]["groups"]
+        assert stored["card_usage"]["data"]["windows"] == usage["windows"]
+        for case in ("counts", "duplicate-login", "unknown-group", "usage-total"):
+
             bad = copy.deepcopy(body)
-            bad["seq"] = 4
+            bad["seq"] = 5
             if case == "counts":
                 bad["groups"]["cards"]["data"]["summary"]["free"] += 1
             elif case == "duplicate-login":
                 bad["groups"]["sessions"]["data"]["items"] *= 2
+            elif case == "usage-total":
+                bad["groups"]["card_usage"]["data"]["windows"][0]["card_seconds"] += 1
             else:
                 bad["groups"]["unexpected"] = group({})
             api("POST", "/api/v1/agent/snapshots", tokens["unit", "agent"], bad, expected=400)
-            assert api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["seq"] == 3
+            assert api("GET", "/api/v1/hosts/unit/snapshot", tokens["unit", "viewer"])["seq"] == 4
         print("HTTPS authentication, host ACLs, atomic snapshots and sequence checks: PASS", flush=True)
 
         # Certificate trust and hostname verification must remain enabled in the C++ client.

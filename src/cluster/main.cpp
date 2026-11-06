@@ -64,7 +64,7 @@ int positive(std::string_view value, int limit) {
 int main(int argc, char** argv) {
 	try {
 		std::setlocale(LC_ALL, "");
-		bool demo = false, local = false, once = false, initial_detail = false, check = false;
+		bool demo = false, local = false, once = false, initial_detail = false, check = false, initial_usage = false;
 		std::vector<std::string> aliases;
 		std::string agent_path, https_config;
 		int width = 120, height = 36, interval = 2000, demo_count = 4;
@@ -78,12 +78,14 @@ int main(int argc, char** argv) {
 			else if (arg == "--check") check = true;
 			else if (arg == "--local") local = true;
 			else if (arg == "--detail") initial_detail = true;
+			else if (arg == "--usage") initial_usage = true;
 			else if (arg == "--low-color") theme.lowcolor = true;
 			else if (arg == "--help") {
 				std::cout << "pto-btop " BTOP_CLUSTER_VERSION " live monitor\n"
 					"  --version          Print the release version\n"
 					"  --config FILE      Read an HTTPS hub configuration\n"
 					"  --check            Check live connectivity without entering the TUI\n"
+					"  --usage            Open card-hour statistics\n"
 					"  --demo             Simulated hosts (four by default)\n"
 					"  --demo-hosts N     Number of simulated hosts, 1-4\n"
 					"  --local            Collect this machine through a local agent\n"
@@ -148,6 +150,7 @@ int main(int argc, char** argv) {
 			}
 		}
 		int selected = 0;
+		hosts[0].usage_open=initial_usage; hosts[0].usage_cluster=not initial_detail;
 		bool detail = initial_detail, dirty = true, editing_filter = false, help = false;
 		std::string filter_draft;
 		auto collect = [&] {
@@ -229,7 +232,7 @@ int main(int argc, char** argv) {
 						"T: tree of returned processes   Space: collapse / expand",
 						"/: name / user:TEXT substring / uid:NUMBER exact",
 						"v: cards/proc   ,/.: card pages   o: fold cards   f: owner processes",
-						"u: logged-in users   Enter: focused item details",
+						"u: login users   h: card hours   H: cards/usage tab   p: period",
 						"[ / ]: core pages   g: total / user / system / iowait",
 						"d: next disk page   i: disk capacity / I/O graphs",
 						"b / n: previous / next interface   a: auto / 10MiB/s scale",
@@ -265,6 +268,38 @@ int main(int argc, char** argv) {
 				else if (static_cast<unsigned char>(key)>=32 and filter_draft.size()<128) filter_draft+=key;
 				hosts[selected].proc_page=0; dirty=true; continue;
 			}
+			auto& usage=hosts[selected];
+			if (usage.usage_open or (detail and usage.cards_focus and usage.usage_tab)) {
+				if (usage.usage_editing) {
+					if (input_key=="escape" or key=='\r' or key=='\n') usage.usage_editing=false;
+					else if (key==127 or key=='\b') {
+						if (not usage.usage_filter.empty()) { auto pos=usage.usage_filter.size()-1; while (pos>0 and (static_cast<unsigned char>(usage.usage_filter[pos])&0xc0)==0x80) --pos; usage.usage_filter.erase(pos); }
+					} else if (static_cast<unsigned char>(key)>=32 and usage.usage_filter.size()<128) usage.usage_filter+=key;
+					usage.usage_selected.clear(); dirty=true; continue;
+				}
+				const bool all=usage.usage_open and usage.usage_cluster;
+				const int page=(usage.usage_open ? Cluster::usage_overlay_rows(hosts,selected,height) : Cluster::usage_visible_rows(Cluster::card_panel_height(usage,height),false));
+				int delta=0;
+				if (input_key=="down" or key=='j') delta=1;
+				else if (input_key=="up" or key=='k') delta=-1;
+				else if (input_key=="pagedown") delta=page;
+				else if (input_key=="pageup") delta=-page;
+				else if (input_key=="home") delta=-10000;
+				else if (input_key=="end") delta=10000;
+				if (delta) { Cluster::move_usage(hosts,selected,delta,all); dirty=true; continue; }
+				if ((key=='\r' or key=='\n') and not usage.usage_open) { usage.usage_open=true; usage.usage_cluster=false; dirty=true; continue; }
+				if (key=='f' and not usage.usage_open) continue;
+				if (key=='p') { const int period=(usage.usage_period+1)%3; for (auto& host : hosts) host.usage_period=period; dirty=true; continue; }
+				if (key=='/' and usage.usage_open) { usage.usage_editing=true; dirty=true; continue; }
+				if (usage.usage_open) {
+					if (key=='h' or input_key=="escape") usage.usage_open=false;
+					else if (key=='\t') { usage.usage_cluster=not usage.usage_cluster; usage.usage_selected.clear(); }
+					else if (key=='q') break;
+					dirty=true; continue;
+				}
+			}
+			if (key=='h') { usage.usage_open=true; usage.usage_cluster=not detail; usage.users_open=false; dirty=true; continue; }
+			if (detail and key=='H') { usage.usage_tab=not usage.usage_tab; usage.cards_focus=true; usage.cards_folded=false; usage.proc_detail=false; dirty=true; continue; }
 			if (key == 'q') break;
 			if (hosts[selected].users_open) {
 				if (key=='u' or input_key=="escape") hosts[selected].users_open=false;
@@ -277,7 +312,7 @@ int main(int argc, char** argv) {
 			if (detail and key=='o') { hosts[selected].cards_folded=not hosts[selected].cards_folded; if (hosts[selected].cards_folded) hosts[selected].cards_focus=false; dirty=true; continue; }
 			if (detail and (key==',' or key=='.')) {
 				auto& host=hosts[selected];
-				host.cards_focus=true; host.cards_folded=false; host.proc_detail=false;
+				host.cards_focus=true; host.cards_folded=false; host.proc_detail=false; host.usage_tab=false;
 				const int page=Cluster::card_visible_rows(host,Cluster::card_panel_height(host,height));
 				Cluster::move_card(host,key=='.' ? page : -page); dirty=true; continue;
 			}

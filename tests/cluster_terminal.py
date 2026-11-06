@@ -141,6 +141,42 @@ finally:
     os.close(master)
     os.close(slave)
 
+# Usage overlays, periods, fuzzy user filters and the CARDS usage tab.
+master, slave = os.openpty()
+resize(slave, 80, 24)
+proc = subprocess.Popen([binary, "--demo"], stdin=slave, stdout=slave,
+                        stderr=slave, start_new_session=True)
+try:
+    view = Screen(80, 24)
+    view.wait_text(master, "Compact overview")
+    os.write(master, b"h")
+    view.wait_text(master, "card hours | all servers")
+    os.write(master, b"\x1b[6~")
+    view.wait_text(master, "10/12")
+    os.write(master, b"p")
+    view.wait_text(master, "7d")
+    os.write(master, b"/ALICE\r")
+    rendered = view.wait_text(master, "Filter: ALICE")
+    assert "ci-runner" not in rendered
+    os.write(master, b"\x1b")
+    view.wait_text(master, "Compact overview")
+    os.write(master, b"1H")
+    view.wait_text(master, "devices / USAGE")
+    os.write(master, b"\r")
+    view.wait_text(master, "card hours | dev-01")
+    resize(slave, 120, 36)
+    assert "card hours | dev-01" in view.resize_when_cleared(master, 120, 36)
+    os.write(master, b"h")
+    view.wait_text(master, "devices / USAGE")
+    os.write(master, b"Hq")
+    assert proc.wait(timeout=5) == 0
+finally:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+    os.close(master)
+    os.close(slave)
+
 if len(sys.argv) > 2:
     with tempfile.TemporaryDirectory(prefix="btop-terminal-") as temporary:
         config = os.path.join(temporary, "btop.conf")

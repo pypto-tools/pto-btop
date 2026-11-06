@@ -330,7 +330,7 @@ std::string cards(const Host& host,const Rect& r,const Draw::Style& style,bool f
 		}
 	}
 	const auto position=fmt::format("{}/{} p{}/{}",selected+1,items.size(),selected/count+1,(items.size()+count-1)/count);
-	const auto controls=host.cards_focus ? (r.width>=65 ? "↑↓ select  PgUp/Dn ,/. page" : "↑↓ select  ,/. page") : "v focus  ,/. page";
+	const auto controls=host.cards_focus ? (r.width>=65 ? "↑↓ select  PgUp/Dn ,/. page" : "↑↓ select  ,/. page") : "H usage  v focus  ,/. page";
 	out+=border(r,2,safe_text(controls,r.width-columns(position)-8),"inactive_fg",true);
 	out+=border(r,r.width-columns(position)-3,position,"title",true);
 	return out;
@@ -484,12 +484,12 @@ std::string detail_view(const Host& host,int width,int height,const Draw::Style&
 	out+=disks(host,disk,style);
 	out+=network(host,{2,y+memory_height+1,left,net_height},style);
 	const Rect right{left+3,y,width-left-4,remaining};
-	if (remaining<18 and host.cards_focus) out+=cards(host,right,style);
+	if (remaining<18 and host.cards_focus) out+=host.usage_tab ? usage_panel(host,right,style) : cards(host,right,style);
 	else if (host.proc_detail) out+=processes(host,right,style);
 	else {
 		const bool folded=host.cards_folded or remaining<18;
 		const int cards_height=card_panel_height(host,height);
-		out+=cards(host,{right.x,right.y,right.width,cards_height},style,folded);
+		out+=host.usage_tab ? usage_panel(host,{right.x,right.y,right.width,cards_height},style,folded) : cards(host,{right.x,right.y,right.width,cards_height},style,folded);
 		out+=processes(host,{right.x,right.y+cards_height+1,right.width,right.height-cards_height-1},style);
 	}
 	return out;

@@ -122,3 +122,12 @@ HTTPS 注册响应 metric_groups=["sessions","cards"] 声明扩展支持；没�
 filter 新增 uid:NUM，NUM 是 0..4294967295 的十进制整数，和进程 uid 做等值匹配。
 空／负数／溢出 UID 不匹配任何进程；user:TEXT 的模糊匹配和普通名称过滤不变。
 卡占用者联动只在新鲜卡数据且占用 UID 已知时触发，仍使用每个查看者自己的订阅。
+
+
+## 开发预览：card_usage
+
+新增可选 card_usage 组，包装与其它资源组一致。数据遵守
+[卡时接口](task-submit-usage-monitor-api.md)，agent 独立每 30 秒采样。
+中心 metric_groups 按组协商能力，未知扩展不向旧中心发送。
+窗口用户总和、每日总和必须匹配卡秒总数；非法数据不替换上一份有效快照。
+120 秒过期阈值只适用于卡时，实时 cards/sessions 的 15 秒规则保留。

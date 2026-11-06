@@ -51,7 +51,7 @@ try:
     reader = Reader(process.stdout)
     hello = reader.get()
     assert hello["type"] == "hello"
-    assert set(hello["capabilities"]) == {"cpu", "memory", "filesystems", "disks", "network", "processes", "sessions", "cards", "uid_filter"}
+    assert set(hello["capabilities"]) == {"cpu", "memory", "filesystems", "disks", "network", "processes", "sessions", "cards", "card_usage", "uid_filter"}
     send(process, request(1))
     assert reader.get()["type"] == "subscribed"
     first = reader.get()

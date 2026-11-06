@@ -24,7 +24,7 @@ class Linux {
 	struct Process { std::uint64_t start, ticks, time; };
 	std::map<int, Process> processes_;
 	std::unique_ptr<Filesystems> filesystems_;
-	std::unique_ptr<Resources> resources_;
+	std::unique_ptr<Resources> resources_, usage_resources_;
 	std::uint64_t last_ = 0, ticks_, page_size_;
 	std::string model_;
 	std::map<unsigned, std::string> users_;

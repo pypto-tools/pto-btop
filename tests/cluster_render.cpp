@@ -324,3 +324,35 @@ TEST(cluster_frame, three_host_summary_fills_only_spare_cell_and_preserves_histo
 	EXPECT_EQ(Cluster::render(hosts,80,24,0,false,{}).find("cluster | overview"),std::string::npos);
 	EXPECT_EQ(Cluster::render(hosts,160,48,0,true,{}).find("cluster | overview"),std::string::npos);
 }
+
+TEST(cluster_frame, card_usage_views_preserve_selection_and_render_at_all_sizes) {
+	std::setlocale(LC_CTYPE,"C.UTF-8"); Theme::setTheme(Theme::Options{});
+	auto hosts=Cluster::demo_hosts();
+	hosts[0].usage_open=true; hosts[0].usage_cluster=true;
+	Cluster::move_usage(hosts,0,2,true); const auto selected=hosts[0].usage_selected;
+	for (auto [width,height] : {std::pair{80,24},{120,36},{160,48},{200,60}}) {
+		Cluster::FrameDiff frames; Cluster::Screen terminal(width,height);
+		for (int period=0;period<3;++period) {
+			hosts[0].usage_period=period;
+			const auto frame=Cluster::render(hosts,width,height,0,false,{});
+			EXPECT_NE(frame.find("card hours | all servers"),std::string::npos);
+			EXPECT_NE(frame.find("HOST %"),std::string::npos);
+			const auto delta=frames.update(frame,width,height);
+			if (period) EXPECT_EQ(delta.find("\x1b[2J"),std::string::npos);
+			terminal.apply(delta); Cluster::Screen expected(width,height); expected.apply(frame);
+			EXPECT_EQ(terminal.cells(),expected.cells());
+		}
+		EXPECT_EQ(hosts[0].usage_selected,selected);
+		hosts[0].usage_open=false; hosts[0].usage_tab=true; hosts[0].cards_focus=true;
+		EXPECT_NE(Cluster::render(hosts,width,height,0,true,{}).find("devices / USAGE"),std::string::npos);
+		hosts[0].usage_open=true;
+	}
+	hosts[0].usage_filter="ALIce";
+	auto filtered=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(filtered.find("alice"),std::string::npos); EXPECT_EQ(filtered.find("ci-runner"),std::string::npos);
+	hosts[0].usage_filter.clear(); hosts[0].usage_period=0;
+	hosts[1].groups["card_usage"]["data"]["timezone"]="Asia/Shanghai";
+	EXPECT_NE(Cluster::usage_overlay(hosts,0,120,36,{}).find("Range/timezone mismatch"),std::string::npos);
+	hosts[0].groups["card_usage"]["data"]["age_ms"]=121000;
+	EXPECT_NE(Cluster::usage_summary(hosts[0]).find("[old]"),std::string::npos);
+}

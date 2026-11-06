@@ -106,6 +106,7 @@ void validate_resource_group(const std::string& name, const Json& group) {
 	require(natural(group.at("observed_monotonic_ms"),9007199254740991ULL) and natural(group.at("interval_ms"),60000));
 	const auto& data=group.at("data");
 	if (data.is_null()) { require(status!="ok"); return; }
+	if (name=="card_usage") { usage_snapshot(data); return; }
 	if (name=="cards") { card_snapshot(data); return; }
 	require(name=="sessions" and data.is_object() and data.at("source")=="utmpx");
 	require(natural(data.at("users"),4096) and natural(data.at("sessions"),4096) and natural(data.at("age_ms"),1000000000000ULL));
