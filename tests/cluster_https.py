@@ -6,6 +6,7 @@ import http.server
 import threading
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -266,7 +267,10 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         assert result_view(*views[1])["data"]["items"] == []
         api("POST", "/api/v1/views", tokens["b", "viewer"], {"id": views[1][1]["id"], "host_id": "a",
              "subscription": subscription("no-such-process", selected=selected)})
-        until(lambda: (result_view(*views[1])["data"].get("selected") or {}).get("pid") == selected["pid"], 10)
+        until(lambda: (result_view(*views[1])["data"].get("selected") or {}).get("detail_status") == "ok", 10)
+        chosen = result_view(*views[1])["data"]["selected"]
+        assert chosen["pid"] == selected["pid"] and chosen["start_time_ticks"] == selected["start_time_ticks"]
+        assert chosen["command"]
         api("GET", "/api/v1/hosts/a/snapshot?view=" + views[1][1]["id"], tokens["a", "viewer"], expected=403)
         api("DELETE", "/api/v1/views/" + views[1][1]["id"], tokens["a", "viewer"], expected=403)
         for user, view in views:
@@ -287,6 +291,31 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
             ptys.append((master, slave, process, screen, original))
         os.write(ptys[0][0], b"m/btop-agent\r")
         ptys[0][3].wait_text(ptys[0][0], "/btop-agent", timeout=10)
+        master, _, _, screen, _ = ptys[0]
+        process_row = re.compile(r"\d+\s+btop-agent\b")
+        until(lambda: process_row.search(screen.read_frame(master, 5)), 10)
+        os.write(master, b"\r")
+        screen.wait_text(master, "proc info", timeout=5)
+        # Selecting a process changes the remote subscription. Every intermediate
+        # frame must retain the list and basic details while the agent catches up.
+        deadline = time.monotonic() + 6
+        loaded = False
+        while time.monotonic() < deadline:
+            rendered = screen.read_frame(master, 5)
+            assert process_row.search(rendered), "Process list vanished while loading details"
+            assert "Process details unavailable" not in rendered, rendered
+            loaded = loaded or ("PPID" in rendered and "[loading]" not in rendered)
+        assert loaded, "Selected process never finished loading"
+        os.write(master, b"\x1b")
+        screen.read_frame(master, 5)
+        # An empty filter result has no selectable process, even after a previous
+        # selection. Enter must not pin PID 0 or reopen an obsolete selection.
+        os.write(master, b"/" + b"\x7f" * len("btop-agent") + b"no-such-process\r")
+        screen.wait_text(master, "0/0", timeout=10)
+        os.write(master, b"\r")
+        rendered = screen.read_frame(master, 5)
+        assert "proc info" not in rendered, rendered
+        print("Process details keep the list visible; empty selection does not open: PASS", flush=True)
         os.write(ptys[1][0], b"T")
         ptys[1][3].wait_text(ptys[1][0], "TREE", timeout=10)
         assert "TREE" not in ptys[2][3].text()

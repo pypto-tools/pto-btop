@@ -251,3 +251,16 @@ TEST(cluster_frame, card_focus_details_fold_and_users_overlay_preserve_frames) {
 		}
 	}
 }
+
+TEST(cluster_render, pending_process_details_keep_basic_fields_visible) {
+	Theme::setTheme(Theme::Options{});
+	auto hosts=Cluster::demo_hosts();
+	auto& host=hosts[0];
+	Cluster::move_process(host,0); host.proc_detail=true;
+	host.groups["processes"]["status"]="warming_up";
+	host.groups["processes"]["data"].erase("selected");
+	const auto frame=Cluster::render(hosts,160,48,0,true,{});
+	EXPECT_NE(frame.find("[loading]"),std::string::npos);
+	EXPECT_NE(frame.find("PPID"),std::string::npos);
+	EXPECT_EQ(frame.find("Process details unavailable"),std::string::npos);
+}

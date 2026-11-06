@@ -6,6 +6,11 @@
 
 namespace Cluster {
 namespace {
+Net::Json process_list_request(Protocol::Subscription request) {
+	request.selected_pid=0; request.selected_start=0;
+	return Protocol::encode(request);
+}
+bool process_history(const std::string& key) { return key.starts_with("proc:") or key.starts_with("rss:"); }
 void copy_metrics(Host& target,const Host& source) {
 	// Display zero offsets belong to this viewer, but cannot outlive a counter reset.
 	const auto& old_interfaces=metric_items(metric_data(target,"network"));
@@ -54,7 +59,7 @@ struct HttpsFeed::Impl {
 	explicit Impl(const Net::Json& settings) : http(settings) {}
 	void publish(std::size_t i,const Protocol::Subscription& request) { std::lock_guard guard(mutex); pending[i]=cached[i]; pending_requests[i]=request; ready[i]=true; }
 	void run(std::stop_token stop) {
-		struct State { std::string session,view,key,sent; std::uint64_t seq=0,renew=0; bool bootstrap=true; };
+		struct State { std::string session,view,key,sent,list; std::uint64_t seq=0,renew=0; bool bootstrap=true; };
 		std::vector<State> states(ids.size());
 		while (not stop.stop_requested()) {
 			std::vector<Protocol::Subscription> requests;
@@ -66,18 +71,38 @@ struct HttpsFeed::Impl {
 					const auto encoded=Protocol::encode(requests[i]); const auto serialized=encoded.dump();
 					if (requests[i].processes) {
 						if (serialized!=state.sent or Protocol::now_ms()-state.renew>4000) {
+							const auto list=process_list_request(requests[i]).dump();
+							// Only a change of selected identity may reuse the displayed list.
+							if (list!=state.list) {
+								host.groups.erase("processes");
+								std::erase_if(host.series,[](const auto& item){return process_history(item.first);});
+								state.list=list;
+							}
 							const auto reply=http.request("POST","/api/v1/views",{{"id",state.view},{"host_id",ids[i]},{"subscription",encoded}});
 							state.view=reply.at("id").get<std::string>(); state.key=reply.at("key").get<std::string>(); state.sent=serialized; state.renew=Protocol::now_ms();
 						}
 					} else if (not state.view.empty()) {
-						http.request("DELETE","/api/v1/views/"+state.view); state.view.clear(); state.key.clear(); state.sent.clear(); host.groups.erase("processes");
+						http.request("DELETE","/api/v1/views/"+state.view); state.view.clear(); state.key.clear(); state.sent.clear(); state.list.clear(); host.groups.erase("processes");
 					}
 					const auto suffix=state.view.empty() ? "" : "?view="+state.view;
 					const auto packet=http.request("GET","/api/v1/hosts/"+ids[i]+"/snapshot"+suffix);
 					const auto session=packet.at("session_id").get<std::string>(); const auto seq=packet.at("seq").get<std::uint64_t>();
 					bool changed=false;
-					if (session!=state.session) { clear_histories(host); state.session=session; state.seq=0; state.bootstrap=true; changed=true; }
+					if (session!=state.session) { host.groups.erase("processes"); clear_histories(host); state.session=session; state.seq=0; state.bootstrap=true; changed=true; }
 					if (packet.at("snapshot").contains("groups")) {
+						const auto& groups=packet.at("snapshot").at("groups");
+						Net::Json retained;
+						decltype(host.series) retained_history;
+						if (groups.contains("processes") and host.groups.contains("processes")) {
+							const auto& group=groups.at("processes");
+							// The hub clears a changed view until the next agent sample. That
+							// placeholder is not an empty process list or a process failure.
+							if (group.value("status",std::string{})=="warming_up" and group.value("observed_monotonic_ms",std::uint64_t{})==0) {
+								retained=host.groups.at("processes");
+								retained["status"]="warming_up"; retained["reason"]="Awaiting process details";
+								for (const auto& [key,values] : host.series) if (process_history(key)) retained_history[key]=values;
+							}
+						}
 						if (seq!=state.seq) {
 							if (state.seq and seq>state.seq+1) state.bootstrap=true;
 							host.proc_detail=requests[i].selected_pid!=0; host.selected_pid=requests[i].selected_pid; host.selected_start=requests[i].selected_start;
@@ -89,6 +114,11 @@ struct HttpsFeed::Impl {
 						if (state.bootstrap) {
 							const auto backfill=http.request("GET","/api/v1/hosts/"+ids[i]+"/history"+suffix);
 							if (backfill.at("session_id")==session and backfill.at("seq")==seq) { restore_history(host,backfill.at("history")); state.bootstrap=false; changed=true; }
+						}
+						if (retained.is_object()) {
+							host.groups["processes"]=std::move(retained);
+							// Retain the last observations without inventing extra samples.
+							for (auto& [key,values] : retained_history) host.series[key]=std::move(values);
 						}
 					}
 					const auto status=packet.at("status").get<std::string>();
@@ -127,7 +157,10 @@ bool HttpsFeed::tick(std::vector<Host>& hosts,const std::vector<Protocol::Subscr
 	std::lock_guard guard(impl_->mutex); impl_->desired=requests; bool changed=false;
 	for (std::size_t i=0; i<hosts.size(); ++i) if (impl_->ready[i]) {
 		copy_metrics(hosts[i],impl_->pending[i]); impl_->ready[i]=false; changed=true;
-		if (Protocol::encode(impl_->pending_requests[i])!=Protocol::encode(requests[i])) hosts[i].groups.erase("processes");
+		if (Protocol::encode(impl_->pending_requests[i])!=Protocol::encode(requests[i])) {
+			if (process_list_request(impl_->pending_requests[i])!=process_list_request(requests[i])) hosts[i].groups.erase("processes");
+			else if (hosts[i].groups.contains("processes")) hosts[i].groups["processes"]["status"]="warming_up";
+		}
 		if (not hosts[i].proc_detail) move_process(hosts[i],0);
 	}
 	return changed;

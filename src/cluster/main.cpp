@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
 						"c / m: CPU / memory sort   s: cycle sort   R: reverse",
 						"T: tree of returned processes   Space: collapse / expand",
 						"/: name / user:TEXT substring / uid:NUMBER exact",
-						"v: cards/proc focus   o: fold cards   f: owner processes",
+						"v: cards/proc   ,/.: card pages   o: fold cards   f: owner processes",
 						"u: logged-in users   Enter: focused item details",
 						"[ / ]: core pages   g: total / user / system / iowait",
 						"d: next disk page   i: disk capacity / I/O graphs",
@@ -271,6 +271,12 @@ int main(int argc, char** argv) {
 			if (key=='u') { hosts[selected].users_open=true; hosts[selected].users_page=0; dirty=true; continue; }
 			if (detail and key=='v') { hosts[selected].cards_focus=not hosts[selected].cards_focus; if (hosts[selected].cards_focus) { hosts[selected].cards_folded=false; hosts[selected].proc_detail=false; } dirty=true; continue; }
 			if (detail and key=='o') { hosts[selected].cards_folded=not hosts[selected].cards_folded; if (hosts[selected].cards_folded) hosts[selected].cards_focus=false; dirty=true; continue; }
+			if (detail and (key==',' or key=='.')) {
+				auto& host=hosts[selected];
+				host.cards_focus=true; host.cards_folded=false; host.proc_detail=false;
+				const int page=Cluster::card_visible_rows(host,Cluster::card_panel_height(host,height));
+				Cluster::move_card(host,key=='.' ? page : -page); dirty=true; continue;
+			}
 			if (detail and hosts[selected].cards_focus) {
 				if (key=='f') { Cluster::filter_card_owner(hosts[selected]); dirty=true; continue; }
 				if (key=='\r' or key=='\n') { hosts[selected].card_detail=not hosts[selected].card_detail; dirty=true; continue; }
@@ -278,14 +284,21 @@ int main(int argc, char** argv) {
 				int delta=0;
 				if (key=='j' or input_key=="down") delta=1;
 				else if (key=='k' or input_key=="up") delta=-1;
-				else if (input_key=="pagedown") delta=8;
-				else if (input_key=="pageup") delta=-8;
+				else if (input_key=="pagedown") delta=Cluster::card_visible_rows(hosts[selected],Cluster::card_panel_height(hosts[selected],height));
+				else if (input_key=="pageup") delta=-Cluster::card_visible_rows(hosts[selected],Cluster::card_panel_height(hosts[selected],height));
 				else if (input_key=="home") delta=-10000;
 				else if (input_key=="end") delta=10000;
 				if (delta) { Cluster::move_card(hosts[selected],delta); dirty=true; continue; }
 			}
 			if (key == '\t') selected = (selected + 1) % hosts.size();
-			else if (key == '\r' or key == '\n') { if (detail) hosts[selected].proc_detail=not hosts[selected].proc_detail; else detail=true; }
+			else if (key == '\r' or key == '\n') {
+				if (not detail) detail=true;
+				else if (hosts[selected].proc_detail) hosts[selected].proc_detail=false;
+				else if (not Cluster::metric_items(Cluster::metric_data(hosts[selected],"processes")).empty()) {
+					Cluster::move_process(hosts[selected],0);
+					hosts[selected].proc_detail=hosts[selected].selected_pid>0;
+				}
+			}
 			else if (input_key=="escape") { if (hosts[selected].proc_detail) hosts[selected].proc_detail=false; else detail=false; }
 			else if (key >= '1' and key < '1'+int(hosts.size())) { selected = key - '1'; detail = true; }
 			else if (detail and key=='c') hosts[selected].sort="cpu";

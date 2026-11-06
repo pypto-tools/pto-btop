@@ -83,6 +83,15 @@ std::string session_summary(const Host& host,bool compact) {
 	const auto suffix=state=="partial" ? " [partial]" : "";
 	return compact ? count_text(sessions,"users")+"/"+count_text(sessions,"sessions") : "users "+count_text(sessions,"users")+" / sessions "+count_text(sessions,"sessions")+suffix;
 }
+int card_panel_height(const Host& host,int terminal_height) {
+	const int cpu_height=std::max(7,((terminal_height-2)*32+50)/100);
+	const int remaining=terminal_height-cpu_height-3;
+	if (remaining<18 and host.cards_focus) return remaining;
+	return host.cards_folded or remaining<18 ? 3 : std::clamp(remaining/2,8,15);
+}
+int card_visible_rows(const Host& host,int panel_height) {
+	return std::max(1,panel_height-5-(host.card_detail and panel_height>=11 ? 3 : 0));
+}
 void move_card(Host& host,int delta) {
 	const auto& items=metric_items(metric_data(host,"cards"),"devices");
 	if (items.empty()) { host.selected_card.clear(); return; }

@@ -94,6 +94,23 @@ try:
     view.wait_text(master, "/uid:1000")
     os.write(master, b"v")
     view.wait_text(master, "cards [focus]")
+    os.write(master, b"\x1b[H")
+    view.wait_text(master, "1/8")
+    resize(slave, 120, 36)
+    assert "1/8 p1/3" in view.resize_when_cleared(master, 120, 36)
+    # Expanded details leave three visible cards. A page must move by three,
+    # rather than jumping eight cards and skipping the middle page.
+    for key, position in ((b"\x1b[6~", "4/8 p2/3"), (b"\x1b[6~", "7/8 p3/3"),
+                          (b"\x1b[5~", "4/8 p2/3")):
+        os.write(master, key)
+        view.wait_text(master, position)
+    os.write(master, b"v")
+    view.wait_text(master, "cards | queue")
+    os.write(master, b".")
+    rendered = view.wait_text(master, "7/8 p3/3")
+    assert "cards [focus]" in rendered
+    os.write(master, b",")
+    view.wait_text(master, "4/8 p2/3")
     resize(slave, 80, 24)
     assert "cards [focus]" in view.resize_when_cleared(master, 80, 24)
     os.write(master, b"\x1b[F")

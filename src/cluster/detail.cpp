@@ -286,7 +286,7 @@ std::string cards(const Host& host,const Rect& r,const Draw::Style& style,bool f
 	const auto& data=metric_data(host,"cards");
 	auto out=box(r,"cards"+std::string(host.cards_focus ? " [focus]" : "")+(fresh ? " | queue" : " | "+state),host.cards_focus ? "hi_fg" : "mem_box",style);
 	out+=line(r,1,card_summary(host));
-	if (folded or r.height<=4) return out;
+	if (folded or r.height<=4) return out+border(r,2,"v cards  ,/. page","inactive_fg",true);
 	out+=line(r,2,queue_summary(host));
 	const auto& items=metric_items(data,"devices");
 	if (items.empty()) {
@@ -296,7 +296,7 @@ std::string cards(const Host& host,const Rect& r,const Draw::Style& style,bool f
 		return out;
 	}
 	int detail_rows=host.card_detail and r.height>=11 ? 3 : 0;
-	const int count=std::max(1,r.height-5-detail_rows);
+	const int count=card_visible_rows(host,r.height);
 	int selected=0;
 	for (std::size_t i=0; i<items.size(); ++i) if (items[i].at("id")==host.selected_card) selected=i;
 	const int start=(selected/count)*count;
@@ -329,7 +329,10 @@ std::string cards(const Host& host,const Rect& r,const Draw::Style& style,bool f
 			out+=line(r,row+2,"Reason: "+(reasons.empty() ? "none" : reasons),"inactive_fg");
 		}
 	}
-	out+=border(r,2,safe_text(fmt::format("v focus  o fold  f owner | {}/{}  health N/A",selected+1,items.size()),r.width-6),"inactive_fg",true);
+	const auto position=fmt::format("{}/{} p{}/{}",selected+1,items.size(),selected/count+1,(items.size()+count-1)/count);
+	const auto controls=host.cards_focus ? (r.width>=65 ? "↑↓ select  PgUp/Dn ,/. page" : "↑↓ select  ,/. page") : "v focus  ,/. page";
+	out+=border(r,2,safe_text(controls,r.width-columns(position)-8),"inactive_fg",true);
+	out+=border(r,r.width-columns(position)-3,position,"title",true);
 	return out;
 }
 std::string user_list(const Host& host,const Rect& r,const Draw::Style& style) {
@@ -361,9 +364,15 @@ const Json& chosen_process(const Host& host) {
 }
 std::string process_detail(const Host& host,const Rect& r,const Draw::Style& style) {
 	const auto& item=chosen_process(host); const auto key=process_key(item);
-	auto out=box(r,fmt::format("proc info {} {}",host.selected_pid,text(item,"name")),"proc_box",style,"Enter hide");
+	const auto group=host.groups.find("processes");
+	const bool loading=(group!=host.groups.end() and text(*group,"status")=="warming_up") or (not item.empty() and text(item,"detail_status").empty());
+	auto out=box(r,fmt::format("proc info {} {}{}",host.selected_pid,text(item,"name"),loading ? " [loading]" : ""),"proc_box",style,"Enter hide");
 	if (text(item,"detail_status")=="gone") return out+line(r,1,"Process exited or identity changed","inactive_fg");
-	if (item.empty() or text(item,"detail_status")=="unavailable") return out+line(r,1,"Process details unavailable / awaiting sample","inactive_fg");
+	if (item.empty() or text(item,"detail_status")=="unavailable") {
+		out+=line(r,1,loading ? "Loading selected process details..." : "Process details unavailable","inactive_fg");
+		if (group!=host.groups.end()) out+=line(r,2,text(*group,"reason"),"inactive_fg");
+		return out;
+	}
 	const int graph_width=std::max(10,r.width/3), x=r.x+graph_width+2, available=r.width-graph_width-3;
 	const auto& cpu_values=history(host,"proc:"+key); const auto& mem_values=history(host,"rss:"+key);
 	const auto max_cpu=cpu_values.empty() ? 100 : std::max(100LL,*std::max_element(cpu_values.begin(),cpu_values.end()));
@@ -479,7 +488,7 @@ std::string detail_view(const Host& host,int width,int height,const Draw::Style&
 	else if (host.proc_detail) out+=processes(host,right,style);
 	else {
 		const bool folded=host.cards_folded or remaining<18;
-		const int cards_height=folded ? 3 : std::clamp(remaining/2,8,15);
+		const int cards_height=card_panel_height(host,height);
 		out+=cards(host,{right.x,right.y,right.width,cards_height},style,folded);
 		out+=processes(host,{right.x,right.y+cards_height+1,right.width,right.height-cards_height-1},style);
 	}

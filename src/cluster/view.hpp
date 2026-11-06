@@ -61,6 +61,8 @@ std::vector<ProcessRow> process_rows(const Host& host);
 void move_process(Host& host, int delta);
 void toggle_process(Host& host);
 void move_card(Host& host, int delta);
+int card_panel_height(const Host& host, int terminal_height);
+int card_visible_rows(const Host& host, int panel_height);
 bool filter_card_owner(Host& host);
 std::string resource_status(const Host& host, const std::string& name);
 std::string card_summary(const Host& host, bool compact = false);
