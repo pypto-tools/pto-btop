@@ -108,6 +108,9 @@ HTTPS_PROXY=http://127.0.0.1:7892 \
 拒绝停止复用该 PID 的其他命令。不支持 pidfd 的系统需自行通过服务管理器停止
 采集器后再运行安装入口。该参数不能与 `--check` 或 `--install-only` 同用。
 
+需要让本机所有登录用户直接使用 `pto-btop` 时，使用
+[系统服务部署入口](system-service.md)，保留原有配置并迁移到专用服务账号。
+
 ## 配置与服务
 
 安装后从 `app/current/scripts/https-init.py` 生成配置，目标可用工具根目录的

@@ -55,6 +55,11 @@ and its `.sha256` file into that directory. Verify the checksum, then run
 [uv and enrollment installation instructions](docs/cluster/release.md#已有节点配置时直接安装)
 if the system Python is older than 3.10. Existing enrollment credentials are reused.
 
+To share the monitor with every local login account, use the
+[system-service deployment](docs/cluster/system-service.md). Its Python 3.9+
+installer reuses enrollment, installs the verified v0.5.0 release, and provides
+a global `pto-btop` command plus optional systemd activation.
+
 ## Connect the machines
 
 Use `scripts/https-init.py` from the extracted package, or

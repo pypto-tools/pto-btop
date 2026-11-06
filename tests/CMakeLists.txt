@@ -44,6 +44,9 @@ if(BTOP_CLUSTER)
     $<TARGET_FILE:btop-agent> $<TARGET_FILE:btop-cluster>
     ${PROJECT_SOURCE_DIR}/scripts/https-init.py)
   set_tests_properties(cluster_https PROPERTIES TIMEOUT 150)
+  add_test(NAME cluster_system_install COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/cluster_system_install.py)
+  set_tests_properties(cluster_system_install PROPERTIES TIMEOUT 30)
 endif()
 
 if(BTOP_CLUSTER AND BTOP_CLUSTER_STATIC_CXX_RUNTIME)

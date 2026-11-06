@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Exercise public-viewer isolation and failure-safe service migration."""
+import ast
+import importlib.util
+import json
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+SCRIPT = Path(sys.argv.pop(1)) if len(sys.argv) > 1 and sys.argv[1].endswith('.py') else Path(__file__).resolve().parents[1] / 'scripts/system-install.py'
+spec = importlib.util.spec_from_file_location('system_install', SCRIPT)
+deploy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(deploy)
+
+
+class DeploymentTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='pto-system-test-')
+        self.addCleanup(self.temporary.cleanup)
+        self.base = Path(self.temporary.name)
+        self.root = self.base / 'system'
+        self.public = self.base / 'public'
+        self.bin = self.base / 'bin'
+        self.units = self.base / 'units'
+        self.command = self.base / 'pto-btop'
+        patch = mock.patch.multiple(deploy, ROOT=self.root, PUBLIC=self.public,
+                                    LIBEXEC=self.bin, UNITS=self.units, COMMAND=self.command)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.source = self.base / 'source'
+        node = self.source / 'config/node'
+        node.mkdir(parents=True)
+        for role in ('agent', 'viewer'):
+            (node / f'{role}.token').write_text(role * 16)
+            name = 'agent.json' if role == 'agent' else 'client.json'
+            (node / name).write_text(json.dumps({'version': 1, 'server': 'https://127.0.0.1:8443',
+                                                'ca_file': 'ca.pem', 'token_file': f'{role}.token'}))
+        (node / 'ca.pem').write_text('fixture CA')
+        server = self.source / 'config/enrollment/server'
+        server.mkdir(parents=True)
+        (server / 'key.pem').write_text('fixture private key')
+        (server / 'cert.pem').write_text('fixture certificate')
+        (server / 'server.json').write_text(json.dumps({
+            'version': 1, 'listen': '127.0.0.1', 'port': 8443,
+            'cert_file': 'cert.pem', 'key_file': 'key.pem',
+            'hosts': [{'id': 'example', 'token_file': '../../node/agent.token'}],
+            'viewers': [{'id': 'view', 'hosts': ['example'], 'token_file': '../../node/viewer.token'}],
+        }))
+
+    def test_export_preserves_auth_and_excludes_private_material_from_public(self):
+        before = {p: p.read_bytes() for p in self.source.rglob('*') if p.is_file()}
+        files = deploy.enrollment(self.source, True)
+        self.assertEqual({p.name for p in files if p.parent == self.public},
+                         {'ca.pem', 'client.json', 'viewer.token'})
+        public_bytes = b''.join(data for path, data in files.items() if path.parent == self.public)
+        self.assertNotIn(b'fixture private key', public_bytes)
+        self.assertNotIn(b'agent' * 16, public_bytes)
+        server = json.loads(files[self.root / 'config/server/server.json'])
+        self.assertEqual(files[self.root / 'config/server' / server['hosts'][0]['token_file']], b'agent' * 16)
+        self.assertEqual(server['listen'], '127.0.0.1')
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+
+    def test_source_reference_cannot_escape_or_follow_symlink(self):
+        path = self.source / 'config/node/agent.json'
+        data = json.loads(path.read_text())
+        outside = self.base / 'outside.token'
+        outside.write_text('x' * 64)
+        data['token_file'] = str(outside)
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'escapes'):
+            deploy.enrollment(self.source, False)
+        data['token_file'] = 'linked.token'
+        (path.parent / 'linked.token').symlink_to(path.parent / 'agent.token')
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'Symlink'):
+            deploy.enrollment(self.source, False)
+
+    def test_refuses_changed_enrollment_and_unknown_commands(self):
+        files = deploy.enrollment(self.source, False)
+        self.public.mkdir()
+        (self.public / 'viewer.token').write_text('different enrollment')
+        with mock.patch.object(deploy, 'ordinary_parents'), self.assertRaisesRegex(ValueError, 'differs'):
+            deploy.check_targets(files, False)
+        (self.public / 'viewer.token').unlink()
+        self.command.write_text('#!/bin/sh\necho unrelated command\n')
+        with mock.patch.object(deploy, 'ordinary_parents'), self.assertRaisesRegex(ValueError, 'unmanaged'):
+            deploy.check_targets(files, False)
+
+    def install_launcher(self, child_body):
+        self.public.mkdir()
+        self.bin.mkdir()
+        for path, data in deploy.enrollment(self.source, False).items():
+            if path.parent == self.public:
+                path.write_bytes(data)
+        binary = self.bin / 'pto-btop'
+        binary.write_text(f'#!{sys.executable}\n' + child_body)
+        binary.chmod(0o755)
+        self.command.write_bytes(deploy.wrapper())
+        self.command.chmod(0o755)
+
+    def test_launcher_creates_private_token_and_cleans_up(self):
+        self.install_launcher('''import json, os, sys
+from pathlib import Path
+p=Path(sys.argv[sys.argv.index('--config')+1])
+c=json.loads(p.read_text())
+token=p.parent/c['token_file']
+assert token.stat().st_mode & 0o777 == 0o600
+assert p.parent.stat().st_mode & 0o777 == 0o700
+assert token.read_text() == 'viewer'*16
+print(json.dumps({'directory':str(p.parent), 'args':sys.argv[3:], 'ca':c['ca_file']}))
+''')
+        result = subprocess.check_output([str(self.command), '--check', '--theme', 'with spaces'], text=True)
+        data = json.loads(result)
+        self.assertEqual(data['args'], ['--check', '--theme', 'with spaces'])
+        self.assertEqual(data['ca'], str(self.public / 'ca.pem'))
+        self.assertFalse(Path(data['directory']).exists())
+
+    def test_explicit_modes_bypass_public_credentials(self):
+        self.install_launcher('import json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+        (self.public / 'viewer.token').unlink()
+        for arguments in (['--demo'], ['--local'], ['--ssh', 'dev'], ['--config', 'private file.json'], ['--version']):
+            result = subprocess.check_output([str(self.command)] + arguments, text=True)
+            self.assertEqual(json.loads(result), arguments)
+
+    def test_launcher_forwards_term_and_cleans_up(self):
+        self.install_launcher('''import json,sys,time,signal
+from pathlib import Path
+p=Path(sys.argv[sys.argv.index('--config')+1])
+signal.signal(signal.SIGTERM,lambda *args:sys.exit(0))
+print(p.parent,flush=True)
+time.sleep(20)
+''')
+        process = subprocess.Popen([str(self.command)], stdout=subprocess.PIPE, text=True)
+        try:
+            directory = Path(process.stdout.readline().strip())
+            self.assertTrue(directory.exists())
+            process.terminate()
+            self.assertEqual(process.wait(timeout=5), 0)
+            self.assertFalse(directory.exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdout.close()
+
+    def test_wrong_process_is_never_stopped(self):
+        command = [sys.executable, '-c', 'import time;time.sleep(20)']
+        process = subprocess.Popen(command)
+        try:
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                deploy.stop_background({'pid': process.pid, 'command': command + ['wrong']})
+            self.assertIsNone(process.poll())
+            deploy.stop_background({'pid': process.pid, 'command': command})
+            self.assertEqual(process.wait(timeout=3), -signal.SIGTERM)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+    def test_activation_failure_restores_stopped_background(self):
+        old = {'role': 'server'}
+        def command(*args, **kwargs):
+            if args == ('systemctl', 'restart', 'pto-btop-agent.service'):
+                raise subprocess.CalledProcessError(1, args)
+        with mock.patch.object(deploy, 'run', side_effect=command), \
+             mock.patch.object(deploy, 'stop_background') as stop, \
+             mock.patch.object(deploy, 'restore_background') as restore, \
+             mock.patch.object(deploy.subprocess, 'run') as cleanup, \
+             mock.patch.object(deploy.time, 'sleep'):
+            with self.assertRaises(subprocess.CalledProcessError):
+                deploy.activate(self.source, ('server', 'agent'), {'server': old}, [])
+            stop.assert_called_once_with(old)
+            restore.assert_called_once_with(old)
+            cleanup.assert_any_call(['systemctl', 'stop', 'pto-btop-server.service'], check=False)
+
+    def test_corrupt_package_rejected_before_extraction(self):
+        archive = self.base / 'bad.tar.gz'
+        archive.write_bytes(b'not the official package')
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            deploy.verify_archive(archive, 'arm64', self.base / 'extract')
+        self.assertFalse((self.base / 'extract').exists())
+
+    def test_service_is_unprivileged_and_configuration_is_private(self):
+        for role in ('server', 'agent'):
+            text = deploy.unit(role).decode()
+            self.assertIn('User=pto-btop\n', text)
+            self.assertIn('WantedBy=multi-user.target\n', text)
+            self.assertIn('ProtectHome=read-only\n', text)
+            self.assertNotIn('ProtectHome=true', text)
+            self.assertNotIn('/etc/pto-btop/client.json', text)
+
+    def test_python_39_syntax(self):
+        ast.parse(SCRIPT.read_text(), feature_version=(3, 9))
+        ast.parse(deploy.wrapper().decode(), feature_version=(3, 9))
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -91,12 +91,13 @@ def main():
         scripts = root / "scripts"
         scripts.mkdir()
         shutil.copy2(source / "scripts/https-init.py", scripts / "https-init.py")
+        shutil.copy2(source / "scripts/system-install.py", scripts / "system-install.py")
         docs = root / "docs/cluster"
         docs.mkdir(parents=True)
         for doc in ("release.md", "https.md", "prototype.md", "detail-preview.png", "upstream.json",
                     "README.md", "design.md", "deployment.md", "implementation.md",
                     "centralized-https.md", "protocol.md", "source-study.md", "third-party.md",
-                    "resources-monitoring.md", "task-submit-monitor-api.md",
+                    "resources-monitoring.md", "task-submit-monitor-api.md", "system-service.md",
                     "resources-overview.png", "resources-detail.png", "overview-preview.png"):
             shutil.copy2(source / "docs/cluster" / doc, docs / doc)
         shutil.copytree(source / "docs/cluster/examples", docs / "examples")
