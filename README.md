@@ -110,6 +110,11 @@ these keys also expand and focus the card table. The footer shows selection and
 page numbers, for example `4/8 p2/3`.
 Manual `user:TEXT` filters remain case-insensitive substrings; `uid:1000` is exact.
 
+The development source also provides [per-user card-hour statistics](docs/cluster/card-usage.md):
+press `h` for usage, `p` for today / 7 / 30 days, or `H` in details to switch the
+CARDS panel. Try `--demo --demo-hosts 3 --usage`. This preview requires the new
+task-submit usage monitor on each real node.
+
 With three servers, the unused overview cell shows cluster totals and per-host
 comparisons. CPU totals are weighted by logical cores; missing or stale data is
 excluded and marked with coverage counts. The panel uses existing themes and

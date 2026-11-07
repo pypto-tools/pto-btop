@@ -99,6 +99,7 @@ Json parse_process(std::string_view stat, std::uint64_t page_size) {
 Linux::Linux(std::filesystem::path proc, std::filesystem::path sys, std::uint64_t ticks, std::uint64_t page_size)
 	: proc_(std::move(proc)), sys_(std::move(sys)), filesystems_(std::make_unique<Filesystems>(proc_)),
 	  resources_(std::make_unique<Resources>(proc_=="/proc" ? "/run/utmp" : "",proc_=="/proc" ? "/usr/local/bin/task-submit" : "")),
+	  usage_resources_(std::make_unique<Resources>("",proc_=="/proc" ? "/usr/local/bin/task-submit" : "",true)),
 	  ticks_(ticks ? ticks : std::max(1L, sysconf(_SC_CLK_TCK))),
 	  page_size_(page_size ? page_size : std::max(1L, sysconf(_SC_PAGESIZE))) {
 	std::ifstream cpuinfo(proc_ / "cpuinfo");
@@ -129,7 +130,7 @@ Json Linux::hello(const std::string& session) const {
 	std::string boot;
 	try { boot = read_text(proc_ / "sys/kernel/random/boot_id"); boot.erase(boot.find_last_not_of("\r\n") + 1); } catch (...) { boot = "unknown"; }
 	return {{"type", "hello"}, {"version", 1}, {"session_id", session}, {"boot_id", boot}, {"agent_version", BTOP_CLUSTER_VERSION},
-		{"capabilities", {"cpu", "memory", "filesystems", "disks", "network", "processes", "sessions", "cards", "uid_filter"}},
+		{"capabilities", {"cpu", "memory", "filesystems", "disks", "network", "processes", "sessions", "cards", "card_usage", "uid_filter"}},
 		{"host", {{"hostname", hostname}, {"os", "linux"}, {"arch", system.machine}, {"online_cores", sysconf(_SC_NPROCESSORS_ONLN)}}}};
 }
 
@@ -418,6 +419,7 @@ Json Linux::base_groups(const Protocol::Subscription& options, std::uint64_t now
 	collect("network", [&] { return network(options, now); });
 	const auto resources=resources_->sample(now);
 	for (const auto* name : {"sessions","cards"}) groups[name]=resources.at(name);
+	groups["card_usage"]=usage_resources_->sample(now).at("card_usage");
 	return groups;
 }
 

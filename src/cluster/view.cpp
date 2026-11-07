@@ -116,6 +116,7 @@ std::string draw_card(const Host& host, const Rect& rect, bool selected, const D
 	if (int(capacity.size()+owner.size())+2<inner) out+=Mv::to(heading,left+inner-int(owner.size()))+Theme::c("graph_text")+owner;
 	if (devices.empty()) write(heading+1,"No card inventory available","graph_text");
 	for (int i=0;i<visible;++i) out+=card_chip(devices[i],left+(i%per_row)*(tile_width+1),heading+1+(i/per_row)*tile_height,id_width,rich,fresh,style);
+	if (heading+grid_height<stats_y-1) write(stats_y-1,usage_summary(host),"cached_mid");
 	const auto users_state=resource_status(host,"sessions"); const auto& users=metric_data(host,"sessions");
 	const bool users_fresh=users_state=="ok" or users_state=="partial";
 	const auto user_count=users_fresh ? (users_state=="partial" ? "~" : "")+amount(users,"users") : "--";
@@ -198,7 +199,7 @@ std::string draw_cluster_summary(const std::vector<Host>& hosts,const Rect& rect
 		if (stride>=4) info(3,online ? "CARDS "+state : host.status,"graph_text");
 	}
 	write(height-3,fmt::format("Samples: CPU {}/{}  MEM {}/{}  CARDS {}/{}",totals.cpu_hosts,count,totals.memory_hosts,count,totals.card_hosts,count),"graph_text");
-	write(height-2,"Online data only  |  * partial  -- unavailable","graph_text");
+	write(height-2,usage_cluster_summary(hosts),"cached_mid");
 	return out+Theme::c("main_bg")+Theme::c("main_fg");
 }
 
@@ -292,6 +293,7 @@ void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms) {
 			groups["processes"]["data"]["selected"]=item;
 			groups["processes"]["data"]["selected"]["detail_status"]="ok";
 		}
+		groups["card_usage"]=Protocol::group(demo_usage(i),stamp,30000,i==2 ? "partial" : "ok");
 		ingest(host,{{"groups",groups},{"wall_time",Protocol::utc_now()}});
 		++i;
 	}
@@ -310,10 +312,10 @@ std::string render(const std::vector<Host>& hosts, int width, int height,
 	}
 	out += at(1, 2, hosts[0].simulated ? "btop-cluster | DEMO - simulated data" : "btop-cluster | LIVE");
 	const auto host_keys=hosts.size()==1 ? std::string{"1"} : "1-"+std::to_string(hosts.size());
-	const auto overview_keys="Tab Select   Enter Details   "+host_keys+" Host   u Users   t Theme   q Quit";
+	const auto overview_keys="Tab Select   Enter Details   "+host_keys+" Host   h Usage   u Users   q Quit";
 	if (detail) {
 		out += detail_view(hosts.at(selected), width, height, style);
-		const std::string controls=host_keys+" Host  Esc Overview  ? Help  q Quit";
+		const std::string controls=host_keys+" Host  h Usage  Esc Overview  ? Help  q Quit";
 		out += at(1,width-1-static_cast<int>(controls.size()),controls);
 	} else if (geometry.layout == Layout::cards) {
 		int grid_height=0;
@@ -342,6 +344,11 @@ std::string render(const std::vector<Host>& hosts, int width, int height,
 		out += at(height - 1, 2, overview_keys);
 	}
 	if (hosts[selected].users_open) out+=users_overlay(hosts[selected],width,height,style);
+	if (hosts[selected].usage_open) {
+		out+=usage_overlay(hosts,selected,width,height,style);
+		out+=at(height-1,2,std::string(width-3,' '));
+		out+=at(height-1,2,safe_text("p Period   / User filter   Tab All/Host   h / Esc Close   q Quit",width-3));
+	}
 	return out + Fx::reset;
 }
 
