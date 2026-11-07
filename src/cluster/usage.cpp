@@ -126,9 +126,16 @@ std::string panel(const std::vector<const Host*>& hosts,const Host& selected,con
 		field(y,left+inner-4,fmt::format("{:3.0f}%",row.share),4,color);
 	}
 	if (sum.rows.empty()) write(first,sum.included ? (selected.usage_filter.empty() ? "No recorded card usage" : "No matching users") : "Card usage unavailable / awaiting sample","graph_text");
-	const std::time_t coverage=sum.covered; std::tm coverage_tm{}; gmtime_r(&coverage,&coverage_tm);
-	char coverage_date[32]; std::strftime(coverage_date,sizeof(coverage_date),"%Y-%m-%d %H:%M UTC",&coverage_tm);
-	const auto warning=sum.mismatch ? "Range/timezone mismatch: totals exclude other ranges" : sum.partial ? std::string("* partial history | known since ")+coverage_date : std::string("Share per host | old: frozen sample | NOW: held cards");
+	std::string warning="Share per host | old: frozen sample | NOW: held cards";
+	if (sum.mismatch) warning="Range/timezone mismatch: totals exclude other ranges";
+	else if (sum.partial) {
+		warning="* partial history";
+		if (sum.covered) {
+			const std::time_t coverage=sum.covered; std::tm coverage_tm{}; gmtime_r(&coverage,&coverage_tm);
+			char coverage_date[32]; std::strftime(coverage_date,sizeof(coverage_date),"%Y-%m-%d %H:%M UTC",&coverage_tm);
+			warning+=std::string(" | known since ")+coverage_date;
+		} else warning+=" | old: frozen sample | NOW: held cards";
+	}
 	write(r.height-3,warning,"graph_text");
 	write(r.height-2,fmt::format("PgUp/PgDn  {}/{}  p Period{}",sum.rows.empty() ? 0 : chosen+1,sum.rows.size(),full ? "  / Filter  Tab Scope  Esc Close" : "  h Expand"),"graph_text");
 	return out+Theme::c("main_bg")+Theme::c("main_fg");

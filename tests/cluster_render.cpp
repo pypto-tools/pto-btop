@@ -356,3 +356,48 @@ TEST(cluster_frame, card_usage_views_preserve_selection_and_render_at_all_sizes)
 	hosts[0].groups["card_usage"]["data"]["age_ms"]=121000;
 	EXPECT_NE(Cluster::usage_summary(hosts[0]).find("[old]"),std::string::npos);
 }
+
+TEST(cluster_frame, card_usage_warnings_require_known_coverage) {
+	std::setlocale(LC_CTYPE,"C.UTF-8"); Theme::setTheme(Theme::Options{});
+	auto hosts=Cluster::demo_hosts();
+	hosts[0].usage_open=true; hosts[0].usage_cluster=true;
+	const auto complete=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(complete.find("Share per host"),std::string::npos);
+	EXPECT_EQ(complete.find("* partial history"),std::string::npos);
+	for (auto& host : hosts) host.groups.erase("card_usage");
+	const auto unavailable=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(unavailable.find("Card usage unavailable"),std::string::npos);
+	EXPECT_NE(unavailable.find("* partial history"),std::string::npos);
+	EXPECT_EQ(unavailable.find("known since"),std::string::npos);
+	EXPECT_EQ(unavailable.find("1970-01-01"),std::string::npos);
+
+	hosts=Cluster::demo_hosts(); hosts[0].usage_cluster=true;
+	for (auto& host : hosts) host.groups["card_usage"]["data"]["age_ms"]=121000;
+	const auto stale=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(stale.find("old: frozen sample"),std::string::npos);
+	EXPECT_NE(stale.find("* partial history"),std::string::npos);
+	EXPECT_EQ(stale.find("known since"),std::string::npos);
+	EXPECT_EQ(stale.find("1970-01-01"),std::string::npos);
+
+	hosts=Cluster::demo_hosts(); hosts[0].usage_cluster=true;
+	for (auto& host : hosts) {
+		auto& group=host.groups["card_usage"]; auto& data=group["data"];
+		group["status"]="partial"; data["status"]="partial"; data["reason"]="history_partial";
+		data["covered_from"]=nullptr;
+		for (auto& window : data["windows"]) {
+			window["complete"]=false;
+			for (auto& day : window["daily"]) day["complete"]=false;
+		}
+	}
+	const auto unknown=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(unknown.find("* partial history"),std::string::npos);
+	EXPECT_EQ(unknown.find("known since"),std::string::npos);
+	for (auto& host : hosts) host.groups["card_usage"]["data"]["covered_from"]=1793923200;
+	const auto known=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(known.find("known since 2026-11-06"),std::string::npos);
+	hosts[1].groups["card_usage"]["data"]["timezone"]="Asia/Shanghai";
+	const auto mismatch=Cluster::usage_overlay(hosts,0,120,36,{});
+	EXPECT_NE(mismatch.find("Range/timezone mismatch"),std::string::npos);
+	EXPECT_EQ(mismatch.find("known since"),std::string::npos);
+	EXPECT_EQ(mismatch.find("* partial history"),std::string::npos);
+}
