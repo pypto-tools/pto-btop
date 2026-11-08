@@ -112,22 +112,23 @@ public:
 				for (auto& [id,view] : views_) if (view.host==machine.id) { view.result=Json::object(); Cluster::clear_histories(view.metrics); }
 			}
 			machine.hello=hello;
-			return {{"host_id",machine.id},{"session_id",machine.session},{"requests",demands(machine.id)},{"metric_groups",{"sessions","cards"}}};
+			return {{"host_id",machine.id},{"session_id",machine.session},{"requests",demands(machine.id)},{"metric_groups",{"sessions","cards","card_usage"}}};
 		}
 		if (request.method=="POST" and path=="/api/v1/agent/snapshots") {
-			auto& machine=agent(request); const auto body=Net::parse_json(request.body);
+			auto& machine=agent(request); auto body=Net::parse_json(request.body);
 			if (machine.session.empty() or body.at("session_id")!=machine.session) throw Net::HttpError(409,"Register agent session first");
 			if (not body.at("seq").is_number_unsigned() or body.at("seq")<=machine.seq) throw Net::HttpError(409,"Sequence must increase");
 			const auto& interval=body.at("interval_ms");
 			if (not interval.is_number_integer() or interval<1000 or interval>10000) throw Net::HttpError(400,"Invalid sampling interval");
 			if (not body.at("wall_time").is_string() or body.at("wall_time").get_ref<const std::string&>().size()>64) throw Net::HttpError(400,"Invalid sample timestamp");
-			const auto& groups=body.at("groups");
+			auto& groups=body.at("groups");
 			for (const auto* name : {"cpu","memory","filesystems","disks","network"}) if (not groups.contains(name)) throw Net::HttpError(400,"Missing metric group");
-			if (groups.size()>7 or Cluster::metric_items(groups.at("cpu").at("data"),"cores").size()>2048) throw Net::HttpError(400,"Invalid metric groups");
+			if (groups.size()>8 or Cluster::metric_items(groups.at("cpu").at("data"),"cores").size()>2048) throw Net::HttpError(400,"Invalid metric groups");
 			for (const auto& [name,group] : groups.items()) {
-				if (name=="sessions" or name=="cards") Protocol::validate_resource_group(name,group);
+				if (name=="sessions" or name=="cards" or name=="card_usage") Protocol::validate_resource_group(name,group);
 				else if (name!="cpu" and name!="memory" and name!="filesystems" and name!="disks" and name!="network") throw Net::HttpError(400,"Unknown metric group");
 			}
+			if (groups.contains("card_usage") and groups["card_usage"]["data"].is_object()) groups["card_usage"]["data"]=Protocol::usage_snapshot(groups["card_usage"]["data"]);
 			auto next=machine.metrics;
 			const auto gap=machine.received and Protocol::now_ms()-machine.received>std::uint64_t(std::max(6000,machine.interval*3));
 			if (gap) Cluster::clear_histories(next);

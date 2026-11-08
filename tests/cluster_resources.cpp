@@ -118,3 +118,31 @@ TEST(resources, uid_filter_is_exact_and_user_filter_remains_fuzzy) {
 	EXPECT_FALSE(Protocol::ProcessFilter("uid:-1").matches(a)); EXPECT_FALSE(Protocol::ProcessFilter("uid:4294967296").matches(a));
 	EXPECT_FALSE(Protocol::ProcessFilter("uid:1000").matches(Json{{"uid",nullptr}}));
 }
+
+TEST(resources, usage_contract_checks_totals_and_async_query_is_independent) {
+	ResourceFixture f;
+	const auto path=std::filesystem::path(__FILE__).parent_path().parent_path()/"docs/cluster/examples/task-submit-usage-monitor.example.json";
+	std::ifstream input(path); Json value; input>>value;
+	value["secret"]="must not propagate"; value["windows"][0]["users"][0]["command"]="private";
+	const auto valid=Protocol::usage_snapshot(value);
+	EXPECT_FALSE(valid.contains("secret")); EXPECT_FALSE(valid["windows"][0]["users"][0].contains("command"));
+	auto bad=valid; bad["windows"][0]["card_seconds"]=0;
+	EXPECT_THROW(Protocol::usage_snapshot(bad),std::exception);
+	bad=valid; bad["windows"][0]["users"].push_back(bad["windows"][0]["users"][0]);
+	EXPECT_THROW(Protocol::usage_snapshot(bad),std::exception);
+	bad=valid; bad["windows"][0]["daily"][0]["card_seconds"]=-1;
+	EXPECT_THROW(Protocol::usage_snapshot(bad),std::exception);
+	bad=valid; bad["covered_from"]=bad["windows"][0]["end"];
+	EXPECT_THROW(Protocol::usage_snapshot(bad),std::exception);
+	f.script("[ \"$1\" = --usage-monitor ] || exit 7\ncat <<'JSON'\n"+valid.dump()+"\nJSON");
+	Collector::Resources usage("",f.root/"monitor",true);
+	Json group;
+	for (int attempt=0;attempt<300;++attempt) {
+		group=usage.sample()["card_usage"];
+		if (group["status"]!="warming_up") break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	ASSERT_EQ(group["status"],"ok"); EXPECT_EQ(group["interval_ms"],30000);
+	EXPECT_EQ(group["data"]["windows"][0]["card_seconds"],valid["windows"][0]["card_seconds"]);
+	EXPECT_EQ(usage.sample(Protocol::now_ms()+130000)["card_usage"]["status"],"unavailable");
+}

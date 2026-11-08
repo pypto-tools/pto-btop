@@ -19,11 +19,12 @@ parser.add_argument("output", type=Path)
 parser.add_argument("columns", nargs="?", type=int, default=120)
 parser.add_argument("rows", nargs="?", type=int, default=36)
 parser.add_argument("--overview", action="store_true")
+parser.add_argument("--usage", action="store_true")
 parser.add_argument("--demo-hosts", type=int, choices=range(1, 5), default=4)
 options = parser.parse_args()
 width, height = options.columns, options.rows
 frame = subprocess.check_output(
-    [options.binary, "--demo", "--demo-hosts", str(options.demo_hosts), *([] if options.overview else ["--detail"]),
+    [options.binary, "--demo", *(["--usage"] if options.usage else []), "--demo-hosts", str(options.demo_hosts), *([] if options.overview else ["--detail"]),
      "--once", "--width", str(width), "--height", str(height)], text=True
 )
 screen(frame, width, height)

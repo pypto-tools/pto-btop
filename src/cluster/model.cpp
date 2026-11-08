@@ -52,7 +52,7 @@ std::string resource_status(const Host& host,const std::string& name) {
 	const auto age=number(data,"age_ms");
 	const auto now=Protocol::now_ms();
 	const auto elapsed=host.simulated or now<host.received_ms ? 0 : now-host.received_ms;
-	if (age<0 or age+elapsed>15000 or data.value("cached",false)) return "STALE";
+	if (age<0 or age+elapsed>(name=="card_usage" ? 120000 : 15000) or data.value("cached",false)) return "STALE";
 	if (status!="ok" and status!="partial") return status;
 	if (name=="cards") {
 		if (data.at("status")=="unavailable") return "unavailable";
@@ -225,11 +225,12 @@ void ingest(Host& host, const Json& snapshot) {
 	const auto& groups=snapshot.at("groups");
 	if (not groups.is_object()) throw std::runtime_error("Invalid metric groups");
 	for (const auto& [name,group] : groups.items()) {
-		if (name=="sessions" or name=="cards") Protocol::validate_resource_group(name,group);
+		if (name=="sessions" or name=="cards" or name=="card_usage") Protocol::validate_resource_group(name,group);
 		if (not group.is_object() or not group.contains("data") or not group.contains("status") or not group["status"].is_string()) throw std::runtime_error("Invalid metric group");
 		if (metric_items(group["data"]).size()>2048) throw std::runtime_error("Too many metric items");
 	}
 	host.groups=groups;
+	if (host.groups.contains("card_usage") and host.groups["card_usage"]["data"].is_object()) host.groups["card_usage"]["data"]=Protocol::usage_snapshot(host.groups["card_usage"]["data"]);
 	move_card(host,0);
 	const auto& cpu=metric_data(host,"cpu"); const auto& mem=metric_data(host,"memory");
 	const auto usage=number(cpu,"usage_pct");
