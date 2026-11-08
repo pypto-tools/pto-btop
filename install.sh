@@ -3,7 +3,7 @@
 # Install/update shared terminal monitoring from the existing local enrollment.
 set -euo pipefail
 
-installer_sha256='1ac0163fdefe0887a4fc96c265781f68b9897dee37f7efd7f5a423bab10c47c5'
+installer_sha256='607f8a33d5068eb175a94c63a6294e11629923b68c946c94af3bfff8883b2a00'
 installer_url='https://raw.githubusercontent.com/pypto-tools/pto-btop/main/scripts/system-install.py'
 arguments=("$@")
 proxy="${HTTPS_PROXY:-${https_proxy:-}}"

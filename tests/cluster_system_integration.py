@@ -21,9 +21,15 @@ services = {}
 enabled = set()
 unit_verified = []
 fail_next = set()
+labelled_current_inode = None
 
 
 def manager(command, *args, **kwargs):
+    global labelled_current_inode
+    if command[0] == '/mock/restorecon':
+        assert list(command[1:]) == ['-RF', str(deploy.ROOT / 'app')]
+        labelled_current_inode = (deploy.ROOT / 'app/current').lstat().st_ino
+        return subprocess.CompletedProcess(command, 0)
     if 'systemd-analyze' in command:
         for path in command[2:]:
             text = Path(path).read_text()
@@ -45,6 +51,8 @@ def manager(command, *args, **kwargs):
     elif action == 'is-enabled':
         code = 0 if name in enabled else 1
     elif action in ('restart', 'start'):
+        # A copied payload or replacement rollback link must be relabelled before activation.
+        assert labelled_current_inode == (deploy.ROOT / 'app/current').lstat().st_ino
         if name in services:
             services[name].terminate()
             services[name].wait(timeout=5)
@@ -94,6 +102,7 @@ try:
             initial.append(process)
             (old / f'state/pto-btop-{role}.pid').write_text(str(process.pid))
         with mock.patch.object(deploy, 'systemd_check'), \
+             mock.patch.object(deploy, 'selinux_preflight', return_value='/mock/restorecon'), \
              mock.patch.object(sys, 'argv', [script, '--source-root', str(old), '--hub', '--activate',
                                             '--archive', '/container-test/release.tar.gz']), \
              mock.patch.object(subprocess, 'run', side_effect=manager):
@@ -106,6 +115,7 @@ try:
         old.rename('/opt/preserved-private-install')
         update_args = [script, '--update', '--archive', '/container-test/release.tar.gz']
         with mock.patch.object(deploy, 'systemd_check'), \
+             mock.patch.object(deploy, 'selinux_preflight', return_value='/mock/restorecon'), \
              mock.patch.object(sys, 'argv', update_args), \
              mock.patch.object(subprocess, 'run', side_effect=manager):
             deploy.main()  # Updating must not require the original home/config.
