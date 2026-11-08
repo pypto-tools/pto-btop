@@ -2,7 +2,7 @@
 
 0.4.0 系列已实现 HTTPS 上报、中心缓存和终端读取。三台机器各运行一个 agent、各自打开 TUI；中心运行在其中一台。现有 `--local`、`--ssh`、`--demo` 保留。
 
-当前源码版本为 `0.5.2`，安装与升级见 [发布说明](release.md)。对外命令为 `pto-btop`、`pto-btop-agent`、`pto-btop-server`，下文仍使用兼容的源码构建程序名。
+当前源码版本为 `0.6.0`，安装与升级见 [发布说明](release.md)。对外命令为 `pto-btop`、`pto-btop-agent`、`pto-btop-server`，下文仍使用兼容的源码构建程序名。
 
 发行包提供 Linux amd64 / arm64 两种原生构建；CI 覆盖三个真实 agent、三个独立终端的 HTTPS 集成测试。具体节点的部署版本和连接状态请使用 `--check` 或总览确认。
 

@@ -124,7 +124,7 @@ filter 新增 uid:NUM，NUM 是 0..4294967295 的十进制整数，和进程 uid
 卡占用者联动只在新鲜卡数据且占用 UID 已知时触发，仍使用每个查看者自己的订阅。
 
 
-## 开发预览：card_usage
+## 可选指标组：card_usage（v0.6.0）
 
 新增可选 card_usage 组，包装与其它资源组一致。数据遵守
 [卡时接口](task-submit-usage-monitor-api.md)，agent 独立每 30 秒采样。
