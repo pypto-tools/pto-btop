@@ -401,6 +401,53 @@ def systemd_check():
         raise ValueError("This deployment requires systemd as PID 1")
 
 
+def selinux_preflight(release):
+    """Check destination policy without changing labels or SELinux settings."""
+    getenforce = shutil.which("getenforce")
+    if not getenforce:
+        if Path("/sys/fs/selinux/enforce").exists():
+            raise ValueError("SELinux is enabled but getenforce is missing; install SELinux utilities")
+        return None
+    mode = run(getenforce, capture_output=True, text=True, timeout=10).stdout.strip()
+    if mode == "Disabled":
+        return None
+    if mode not in ("Enforcing", "Permissive"):
+        raise ValueError("Cannot determine SELinux mode; no application files were changed")
+    restorecon, matchpathcon = shutil.which("restorecon"), shutil.which("matchpathcon")
+    if not restorecon or not matchpathcon:
+        raise ValueError("SELinux deployment requires restorecon and matchpathcon; install SELinux utilities")
+    expected = {ROOT / "app": "usr_t", ROOT / "app/current": "usr_t", release / "bin": "bin_t"}
+    for command in ("btop-cluster", "btop-agent", "btop-server", "pto-btop", "pto-btop-agent", "pto-btop-server"):
+        expected[release / "bin" / command] = "bin_t"
+    for path, kind in expected.items():
+        result = subprocess.run([matchpathcon, "-n", str(path)], capture_output=True, text=True, timeout=10)
+        context = result.stdout.strip().split(":")
+        if result.returncode or len(context) < 4 or context[2] != kind:
+            raise ValueError(
+                f"SELinux destination policy must label {path} as {kind}. "
+                "Configure these persistent rules once, in this order, then retry:\n"
+                f"sudo semanage fcontext -a -t usr_t '{ROOT}/app(/.*)?'\n"
+                f"sudo semanage fcontext -a -t bin_t '{ROOT}/app/releases/[^/]+/bin(/.*)?'\n"
+                "If a rule already exists, inspect it instead of replacing it blindly. "
+                "Application files and services have not been changed.")
+    return restorecon
+
+
+def restore_application_labels(restorecon):
+    if restorecon:
+        # copytree preserves source xattrs, including user_tmp_t from extraction.
+        # Relabel only application files; credentials, state and other tools stay outside this tree.
+        run(restorecon, "-RF", str(ROOT / "app"), timeout=60)
+
+
+def restore_release(previous_release, restorecon):
+    if previous_release:
+        switch = ROOT / "app/.system-rollback"
+        switch.symlink_to(previous_release)
+        os.replace(switch, ROOT / "app/current")
+        restore_application_labels(restorecon)
+
+
 def default_source():
     home = Path(pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir) if os.environ.get("SUDO_USER") else Path.home()
     return home / ".local/share/pto-btop"
@@ -489,6 +536,8 @@ def main():
         metadata, digest = installer["validate"](package)
         if metadata['version'] != version:
             raise ValueError("Release version does not match the package manifest")
+        release = ROOT / 'app/releases' / f"{version}-{metadata['architecture']}-{digest[:12]}"
+        restorecon = selinux_preflight(release)
         if args.check:
             print(f"Checks passed: v{version}, {'hub + agent' if hub else 'agent'}, all local users may view.")
             print("Enrollment, processes and system files unchanged. Re-run with sudo and --activate to deploy.")
@@ -504,7 +553,12 @@ def main():
             account = pwd.getpwnam(ACCOUNT)
         if grp.getgrnam(ACCOUNT).gr_gid != account.pw_gid:
             raise ValueError("The pto-btop service account must use its own primary group")
-        installer["install"](package, ROOT, LIBEXEC, metadata, digest)
+        try:
+            installer["install"](package, ROOT, LIBEXEC, metadata, digest)
+            restore_application_labels(restorecon)
+        except Exception:
+            restore_release(previous_release, restorecon)
+            raise
         # The verified payload was extracted under a private temporary directory;
         # its installed parent paths must be traversable by ordinary viewers.
         for path in (ROOT, ROOT / "app", ROOT / "app/releases", LIBEXEC, PUBLIC):
@@ -536,10 +590,7 @@ def main():
             try:
                 activate(source, roles, processes, user_services)
             except Exception:
-                if previous_release:
-                    switch = ROOT / "app/.system-rollback"
-                    switch.symlink_to(previous_release)
-                    os.replace(switch, ROOT / "app/current")
+                restore_release(previous_release, restorecon)
                 for path, data in previous_units.items():
                     atomic_file(path, data, 0o644)
                 if previous_admin is not None:

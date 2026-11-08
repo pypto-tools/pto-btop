@@ -235,6 +235,74 @@ time.sleep(20)
             restore.assert_called_once_with(old)
             cleanup.assert_any_call(['systemctl', 'stop', 'pto-btop-server.service'], check=False)
 
+    def test_selinux_disabled_needs_no_label_tools(self):
+        with mock.patch.object(deploy.shutil, 'which', side_effect=lambda name: '/usr/sbin/getenforce' if name == 'getenforce' else None), \
+             mock.patch.object(deploy, 'run', return_value=SimpleNamespace(stdout='Disabled\n')) as command:
+            self.assertIsNone(deploy.selinux_preflight(self.root / 'app/releases/test'))
+        command.assert_called_once_with('/usr/sbin/getenforce', capture_output=True, text=True, timeout=10)
+
+    def test_selinux_enabled_without_getenforce_does_not_silently_skip(self):
+        with mock.patch.object(deploy.shutil, 'which', return_value=None), \
+             mock.patch.object(Path, 'exists', return_value=True):
+            with self.assertRaisesRegex(ValueError, 'getenforce is missing'):
+                deploy.selinux_preflight(self.root / 'app/releases/test')
+
+    def test_selinux_preflight_is_read_only_in_enforcing_and_permissive_modes(self):
+        def policy(command, **kwargs):
+            path = Path(command[-1])
+            kind = 'usr_t' if path in (self.root / 'app', self.root / 'app/current') else 'bin_t'
+            return SimpleNamespace(returncode=0, stdout=f'system_u:object_r:{kind}:s0\n')
+        for mode in ('Enforcing', 'Permissive'):
+            with self.subTest(mode=mode), \
+                 mock.patch.object(deploy.shutil, 'which', side_effect=lambda name: '/usr/sbin/' + name), \
+                 mock.patch.object(deploy, 'run', return_value=SimpleNamespace(stdout=mode)) as command, \
+                 mock.patch.object(deploy.subprocess, 'run', side_effect=policy) as query:
+                self.assertEqual(deploy.selinux_preflight(self.root / 'app/releases/test'), '/usr/sbin/restorecon')
+                self.assertEqual(command.call_count, 1)  # Only getenforce, never relabel or policy writes.
+                self.assertTrue(all(call.args[0][:2] == ['/usr/sbin/matchpathcon', '-n'] for call in query.call_args_list))
+                self.assertFalse(self.root.exists())
+
+    def test_selinux_home_or_temporary_policy_fails_before_mutation(self):
+        for kind, app_is_valid in (('user_home_t', False), ('user_tmp_t', True), ('usr_t', True)):
+            def policy(command, **kwargs):
+                path = Path(command[-1])
+                actual = 'usr_t' if app_is_valid and path in (self.root / 'app', self.root / 'app/current') else kind
+                return SimpleNamespace(returncode=0, stdout=f'unconfined_u:object_r:{actual}:s0\n')
+            with self.subTest(kind=kind), \
+                 mock.patch.object(deploy.shutil, 'which', side_effect=lambda name: '/usr/sbin/' + name), \
+                 mock.patch.object(deploy, 'run', return_value=SimpleNamespace(stdout='Enforcing')) as command, \
+                 mock.patch.object(deploy.subprocess, 'run', side_effect=policy):
+                with self.assertRaisesRegex(ValueError, 'persistent rules once'):
+                    deploy.selinux_preflight(self.root / 'app/releases/test')
+                self.assertEqual(command.call_count, 1)
+                self.assertFalse(self.root.exists())
+
+    def test_selinux_missing_relabel_tool_fails_before_mutation(self):
+        with mock.patch.object(deploy.shutil, 'which', side_effect=lambda name: None if name == 'restorecon' else '/usr/sbin/' + name), \
+             mock.patch.object(deploy, 'run', return_value=SimpleNamespace(stdout='Enforcing')):
+            with self.assertRaisesRegex(ValueError, 'requires restorecon and matchpathcon'):
+                deploy.selinux_preflight(self.root / 'app/releases/test')
+        self.assertFalse(self.root.exists())
+
+    def test_rollback_restores_link_before_application_labels(self):
+        app = self.root / 'app'
+        (app / 'releases/old').mkdir(parents=True)
+        (app / 'releases/new').mkdir()
+        (app / 'current').symlink_to('releases/new')
+        config = self.root / 'config'
+        config.mkdir()
+        token = config / 'agent.token'
+        token.write_text('preserved private fixture')
+        token.chmod(0o600)
+        def relabel(*args, **kwargs):
+            self.assertEqual(args, ('/usr/sbin/restorecon', '-RF', str(app)))
+            self.assertEqual((app / 'current').readlink(), Path('releases/old'))
+        with mock.patch.object(deploy, 'run', side_effect=relabel) as command:
+            deploy.restore_release('releases/old', '/usr/sbin/restorecon')
+        command.assert_called_once()
+        self.assertEqual(token.read_text(), 'preserved private fixture')
+        self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+
     def test_corrupt_package_rejected_before_extraction(self):
         archive = self.base / 'bad.tar.gz'
         archive.write_bytes(b'not the official package')

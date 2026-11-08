@@ -40,6 +40,36 @@ sudo pto-btop-update --proxy http://127.0.0.1:7892
 系统部署入口兼容 Python 3.9+，Python 3.9 系统不需要先安装 uv。首次迁移需要
 当前账号已有可用的私有配置；它不会重新生成、索取或打印凭据。
 
+## SELinux 主机
+
+SELinux 为 `Enforcing` 或 `Permissive` 时，系统安装器要求 `getenforce`、
+`matchpathcon`、`restorecon`，并在安装前检查目标程序路径的持久标签规则。
+RHEL 8/9 系统可通过 `libselinux-utils`、`policycoreutils` 和 `policycoreutils-python-utils` 安装所需工具。
+首次使用默认系统安装目录时，由管理员依次配置：
+
+```bash
+sudo semanage fcontext -a -t usr_t '/home/pypto-tools/pto-btop/app(/.*)?'
+sudo semanage fcontext -a -t bin_t '/home/pypto-tools/pto-btop/app/releases/[^/]+/bin(/.*)?'
+sudo restorecon -RFv /home/pypto-tools/pto-btop/app
+```
+
+宽规则在前、可执行文件规则在后；若已有同名规则，先检查现有策略，不要盲目覆盖。
+首次安装前 `app` 目录尚不存在时，可以省略手动 `restorecon`；安装器会在复制后应用标签。
+`--check` 只验证策略，不修改规则或文件标签。缺少工具或规则不匹配时，安装器在切换应用、
+停止服务之前退出；不会自动关闭 SELinux 或放宽文件权限。
+
+安装器复制应用后、以及失败回退旧版本后，都会仅对 `app` 目录执行 `restorecon`，
+避免解包目录的 `user_tmp_t` 随文件复制进入服务执行路径。证书、令牌、状态和其他工具目录
+不参与重标记。已有版本出现 `203/EXEC` 时，修正规则并执行上面的手动 `restorecon`，
+再启动 agent；确认恢复后重新升级。仅有 `Installed ...` 提示不代表服务激活成功。
+
+本修复进入正式安装包后，仍使用旧更新器的主机应先重新运行本页的一键安装命令，
+由新版安装器完成标签恢复并更新管理入口；以后继续使用 `pto-btop-update`。
+仅更新仓库脚本不会改变已经发布的旧安装包。
+
+SELinux 标签检查使用模拟策略命令进行回归测试；容器测试不能替代目标主机上
+`Enforcing` 模式下的 systemd 启动验证。
+
 ## 安装结果
 
 | 位置 | 用途与权限 |
