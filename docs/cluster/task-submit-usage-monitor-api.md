@@ -1,4 +1,4 @@
-# task-submit 卡时监控接口（schema 1，开发预览）
+# task-submit 卡时监控接口（schema 1）
 
 ```bash
 task-submit --usage-monitor --json

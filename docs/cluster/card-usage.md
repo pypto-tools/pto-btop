@@ -1,11 +1,11 @@
-# 卡时统计（开发预览）
+# 卡时统计
 
-本地源码已提供 task-submit 卡时采集、HTTPS 转发和终端展示。此功能尚未进入正式发行包。
+v0.6.0 提供 task-submit 卡时采集、HTTPS 转发和终端展示。真实数据需要各节点运行支持卡时接口的 task-submit。
 
 ## 看预览
 
 ```bash
-./build/cluster/btop-cluster --demo --demo-hosts 3 --usage
+pto-btop --demo --demo-hosts 3 --usage
 ```
 
 演示使用模拟数据；顶部有 DEMO 标记。按 h 或 Esc 关闭卡时页。
@@ -50,7 +50,7 @@ HTTPS、证书、节点权限和查看配置保持现有结构。每个查看者
 才能合并总量；不一致时显示提示并排除不匹配节点。此配置与原有飞书日报时区独立。
 
 建议先升级中心程序，再更新 task-submit 的 publisher 和各 agent，最后更新查看端。
-本地预览不代表三台服务器已经部署。
+发布安装包不会自动更新服务器；各节点需要分别升级。
 
 ## 验证记录
 

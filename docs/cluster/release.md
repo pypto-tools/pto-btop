@@ -2,7 +2,7 @@
 
 项目对外名称为 `pto-btop`，本地源码目录仍可保留 `ci-tools/btop-cluster`。
 独立仓库为 [pypto-tools/pto-btop](https://github.com/pypto-tools/pto-btop)，
-当前正式版本为 `v0.5.2`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
+当前正式版本为 `v0.6.0`。构建结果见 [GitHub Actions](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)，
 已发布安装包以 [Releases](https://github.com/pypto-tools/pto-btop/releases) 为准。
 
 ## 包与兼容性
@@ -69,9 +69,9 @@ pto-btop/
 
 ```bash
 curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
-  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.5.2/setup.py
+  -o setup.py https://github.com/pypto-tools/pto-btop/releases/download/v0.6.0/setup.py
 curl --proxy http://127.0.0.1:7892 --noproxy '' -fL \
-  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.5.2/setup.py.sha256
+  -o setup.py.sha256 https://github.com/pypto-tools/pto-btop/releases/download/v0.6.0/setup.py.sha256
 sha256sum --check setup.py.sha256
 HTTPS_PROXY=http://127.0.0.1:7892 \
   uv run --no-project --python 3.12 setup.py --proxy http://127.0.0.1:7892

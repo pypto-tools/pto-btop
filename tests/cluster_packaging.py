@@ -106,6 +106,13 @@ with tempfile.TemporaryDirectory(prefix="pto-btop-install-test-") as directory:
         packaged.extractall(base / "unpacked")
     package, = (base / "unpacked").iterdir()
     metadata = json.loads((package / "package.json").read_text())
+    # The packaged README's usage guide, screenshot and API example must be usable offline.
+    for document in ("card-usage.md", "task-submit-usage-monitor-api.md", "usage-preview.png",
+                     "examples/task-submit-usage-monitor.example.json"):
+        relative = "docs/cluster/" + document
+        payload = (package / relative).read_bytes()
+        assert payload == (Path(source) / relative).read_bytes()
+        assert metadata["files"][relative] == hashlib.sha256(payload).hexdigest()
     if metadata["openssl_linkage"] == "static":
         assert not any(name.startswith(("libssl.so", "libcrypto.so")) for name in metadata["libraries"])
         assert (package / "share/btop-cluster/licenses/OpenSSL-LICENSE").is_file()
