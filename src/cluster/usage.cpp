@@ -23,7 +23,7 @@ std::string lower(std::string text) { for (auto& c : text) if (static_cast<unsig
 struct Row { std::string key,host,user,state; std::uint64_t seconds,tasks; int cards; double share; };
 struct Summary {
 	std::vector<Row> rows; std::deque<long long> daily;
-	std::uint64_t seconds=0,covered=0; int included=0,total=0; bool partial=false,mismatch=false;
+	std::uint64_t seconds=0,covered=0; std::size_t included=0,total=0; bool partial=false,mismatch=false;
 	std::string zone,observed;
 };
 Summary summarize(const std::vector<const Host*>& hosts,const Host& selection) {
@@ -60,16 +60,18 @@ Summary summarize(const std::vector<const Host*>& hosts,const Host& selection) {
 	result.partial=result.partial or result.included<result.total;
 	return result;
 }
-std::vector<const Host*> sources(const std::vector<Host>& hosts,int selected,bool cluster) {
+std::vector<const Host*> sources(const std::vector<Host>& hosts,std::size_t selected,bool cluster) {
+	if (not cluster) return {&hosts.at(selected)};
 	std::vector<const Host*> result;
-	for (std::size_t i=0;i<hosts.size();++i) if (cluster or i==std::size_t(selected)) result.push_back(&hosts[i]);
+	for (const auto& host : hosts) result.push_back(&host);
 	return result;
 }
 int position(const Summary& summary,const Host& selected) {
 	for (std::size_t i=0;i<summary.rows.size();++i) if (summary.rows[i].key==selected.usage_selected) return i;
 	return 0;
 }
-std::string panel(const std::vector<const Host*>& hosts,const Host& selected,const Rect& r,const Draw::Style& style,bool full,bool folded) {
+std::string panel(const std::vector<const Host*>& hosts,std::size_t selected_index,const Rect& r,const Draw::Style& style,bool full,bool folded) {
+	const auto& selected=*hosts.at(selected_index);
 	const bool cluster=hosts.size()>1; const auto sum=summarize(hosts,selected);
 	const int left=r.x+2,inner=r.width-4;
 	auto out=Draw::createBox(r.x,r.y,r.width,r.height,Theme::c("mem_box"),true,
@@ -85,14 +87,21 @@ std::string panel(const std::vector<const Host*>& hosts,const Host& selected,con
 	write(2,graph ? "Timezone "+sum.zone+" | oldest sample "+(sum.observed.empty() ? "--" : sum.observed) : "p Period  h Expand  H Devices","graph_text");
 	const int first=graph ? 9 : 4, count=usage_visible_rows(r.height,full), chosen=position(sum,selected), start=(chosen/count)*count;
 	if (graph) {
+		std::string title="Daily card hours | oldest to newest";
 		if (selected.usage_period==0) {
-			const int tile=inner/int(hosts.size());
-			for (std::size_t i=0;i<hosts.size();++i) {
-				const int tx=left+int(i)*tile, tw=i+1==hosts.size() ? left+inner-tx : tile-1;
-				out+=Draw::createBox(tx,r.y+4,tw,3,Theme::c("div_line"),true,safe_text(hosts[i]->name,tw-4),"",0,style);
-				const auto& w=window(*hosts[i],0);
+			const auto start_host=first_host_on_page(selected_index);
+			const auto visible=std::min(hosts_per_page,hosts.size()-start_host);
+			title=hosts.size()>hosts_per_page
+				? fmt::format("Today by server | card hours | Hosts {}-{}/{}",start_host+1,start_host+visible,hosts.size())
+				: "Today by server | card hours";
+			const int tile=inner/int(visible);
+			for (std::size_t i=0;i<visible;++i) {
+				const auto& host=*hosts[start_host+i];
+				const int tx=left+int(i)*tile, tw=i+1==visible ? left+inner-tx : tile-1;
+				out+=Draw::createBox(tx,r.y+4,tw,3,Theme::c("div_line"),true,safe_text(host.name,tw-4),"",0,style);
+				const auto& w=window(host,0);
 				const auto value=w.is_null() ? std::string("--") : fmt::format("{:.1f}{}",w.at("card_seconds").get<double>()/3600,w.at("complete")==true ? "" : "*");
-				out+=Mv::to(r.y+5,tx+2)+Theme::c(fresh(*hosts[i]) ? "cached_mid" : "graph_text")+safe_text(value+" card.h",tw-4);
+				out+=Mv::to(r.y+5,tx+2)+Theme::c(fresh(host) ? "cached_mid" : "graph_text")+safe_text(value+" card.h",tw-4);
 			}
 		} else if (not sum.daily.empty()) {
 			const auto max=std::max(1LL,*std::max_element(sum.daily.begin(),sum.daily.end()));
@@ -101,7 +110,7 @@ std::string panel(const std::vector<const Host*>& hosts,const Host& selected,con
 			Draw::Graph chart(inner,3,"cached",bars,style.graph_symbol,false,false,max,0,style);
 			out+=Mv::to(r.y+4,left)+chart();
 		}
-		write(3,selected.usage_period==0 ? "Today by server | card hours" : "Daily card hours | oldest to newest","graph_text");
+		write(3,title,"graph_text");
 		write(7,"/ Filter: "+selected.usage_filter+(selected.usage_editing ? "_" : ""),"title");
 	}
 	const int host_width=cluster ? 12 : 0;
@@ -153,22 +162,23 @@ std::string usage_cluster_summary(const std::vector<Host>& hosts) {
 	const auto sum=summarize(sources(hosts,0,true),hosts.front());
 	return sum.included ? fmt::format("CARD-H {:.1f}{} {} | DATA {}/{}",sum.seconds/3600.0,sum.partial ? "*" : "",periods[hosts.front().usage_period%3],sum.included,sum.total) : "CARD-H -- | h Usage";
 }
-void move_usage(std::vector<Host>& hosts,int selected,int delta,bool cluster) {
+void move_usage(std::vector<Host>& hosts,std::size_t selected,int delta,bool cluster) {
 	auto& host=hosts[selected]; const auto sum=summarize(sources(hosts,selected,cluster),host);
 	if (sum.rows.empty()) { host.usage_selected.clear(); return; }
 	const int index=std::clamp(position(sum,host)+delta,0,int(sum.rows.size())-1); host.usage_selected=sum.rows[index].key;
 }
 std::string usage_panel(const Host& host,const Rect& rect,const Draw::Style& style,bool folded) {
-	return panel({&host},host,rect,style,false,folded);
+	return panel({&host},0,rect,style,false,folded);
 }
-int usage_overlay_rows(const std::vector<Host>& hosts,int selected,int height) {
+int usage_overlay_rows(const std::vector<Host>& hosts,std::size_t selected,int height) {
 	const auto sum=summarize(sources(hosts,selected,hosts[selected].usage_cluster),hosts[selected]);
 	return usage_visible_rows(std::min(height-3,std::max(20,int(sum.rows.size())+12)),true);
 }
-std::string usage_overlay(const std::vector<Host>& hosts,int selected,int width,int height,const Draw::Style& style) {
+std::string usage_overlay(const std::vector<Host>& hosts,std::size_t selected,int width,int height,const Draw::Style& style) {
 	if (width<80 or height<24) return "";
 	const int h=usage_overlay_rows(hosts,selected,height)+12, w=std::min(120,width-3);
-	return panel(sources(hosts,selected,hosts[selected].usage_cluster),hosts[selected],{(width-w)/2+1,(height-h)/2+1,w,h},style,true,false);
+	const bool cluster=hosts[selected].usage_cluster;
+	return panel(sources(hosts,selected,cluster),cluster ? selected : 0,{(width-w)/2+1,(height-h)/2+1,w,h},style,true,false);
 }
 Json demo_usage(int index) {
 	const std::int64_t now=1793966400; // 2026-11-06 12:00 UTC, simulated data only.

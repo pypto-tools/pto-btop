@@ -17,6 +17,8 @@
 #include <csignal>
 #include <filesystem>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <poll.h>
 #include <stdexcept>
 #include <string_view>
@@ -45,6 +47,7 @@ std::string read_key() {
 	}
 	if (sequence=="[A" or sequence=="OA") return "up";
 	if (sequence=="[B" or sequence=="OB") return "down";
+	if (sequence=="[Z") return "backtab";
 	if (sequence=="[5~") return "pageup";
 	if (sequence=="[6~") return "pagedown";
 	if (sequence=="[H" or sequence=="OH") return "home";
@@ -52,8 +55,9 @@ std::string read_key() {
 	return sequence.empty() ? "escape" : "ignored";
 }
 
-int positive(std::string_view value, int limit) {
-	int result = 0;
+template <class Integer>
+Integer positive(std::string_view value, Integer limit = std::numeric_limits<Integer>::max()) {
+	Integer result = 0;
 	const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
 	if (error != std::errc{} or end != value.data() + value.size() or result < 1 or result > limit)
 		throw std::invalid_argument("Invalid numeric option");
@@ -67,7 +71,8 @@ int main(int argc, char** argv) {
 		bool demo = false, local = false, once = false, initial_detail = false, check = false, initial_usage = false;
 		std::vector<std::string> aliases;
 		std::string agent_path, https_config;
-		int width = 120, height = 36, interval = 2000, demo_count = 4;
+		int width = 120, height = 36, interval = 2000;
+		std::size_t demo_count = Cluster::default_demo_hosts;
 		bool demo_count_set=false;
 		Theme::Options theme;
 		for (int i = 1; i < argc; ++i) {
@@ -87,9 +92,9 @@ int main(int argc, char** argv) {
 					"  --check            Check live connectivity without entering the TUI\n"
 					"  --usage            Open card-hour statistics\n"
 					"  --demo             Simulated hosts (four by default)\n"
-					"  --demo-hosts N     Number of simulated hosts, 1-4\n"
+					"  --demo-hosts N     Number of simulated hosts (positive integer)\n"
 					"  --local            Collect this machine through a local agent\n"
-					"  --ssh ALIAS        Collect over SSH (repeat up to 4 times)\n"
+					"  --ssh ALIAS        Collect over SSH (repeat for each host)\n"
 					"  --agent-path PATH  Override the local or remote agent executable\n"
 					"  --detail           Start with cpu/mem/disks/net/cards/proc details\n"
 					"  --once             Print one ANSI frame (live mode waits for two samples)\n"
@@ -100,7 +105,7 @@ int main(int argc, char** argv) {
 				return 0;
 			} else if (arg == "--width" or arg == "--height" or arg == "--theme" or arg == "--interval-ms" or arg == "--ssh" or arg == "--agent-path" or arg == "--config" or arg == "--demo-hosts") {
 				if (++i == argc) throw std::invalid_argument("Missing option value");
-				if (arg == "--demo-hosts") { demo_count=positive(argv[i],4); demo_count_set=true; }
+				if (arg == "--demo-hosts") { demo_count=positive<std::size_t>(argv[i]); demo_count_set=true; }
 				else if (arg == "--width") width = positive(argv[i], 1000);
 				else if (arg == "--height") height = positive(argv[i], 500);
 				else if (arg == "--interval-ms") interval = positive(argv[i], 10000);
@@ -115,7 +120,6 @@ int main(int argc, char** argv) {
 		if (demo_count_set and not demo) throw std::invalid_argument("--demo-hosts requires --demo");
 		if (check and demo) throw std::invalid_argument("--check requires live collection");
 		if (not https_config.empty() and not agent_path.empty()) throw std::invalid_argument("--agent-path does not apply to HTTPS");
-		if (aliases.size()>4) throw std::invalid_argument("At most four SSH hosts");
 		for (const auto& alias : aliases)
 			if (not std::regex_match(alias,std::regex("[A-Za-z0-9_][A-Za-z0-9_.-]*"))) throw std::invalid_argument("Invalid SSH alias");
 		if (agent_path.empty()) agent_path = local ? (std::filesystem::canonical("/proc/self/exe").parent_path()/"btop-agent").string() : "/opt/btop-cluster/bin/btop-agent";
@@ -134,7 +138,7 @@ int main(int argc, char** argv) {
 		std::vector<Cluster::Host> hosts;
 		std::vector<std::unique_ptr<Cluster::Session>> sessions;
 		std::unique_ptr<Cluster::HttpsFeed> https;
-		if (demo) { hosts=Cluster::demo_hosts(interval); hosts.resize(demo_count); }
+		if (demo) hosts=Cluster::demo_hosts(interval,demo_count);
 		else if (not https_config.empty()) https=std::make_unique<Cluster::HttpsFeed>(https_config,hosts);
 		else {
 			if (local) aliases={"localhost"};
@@ -149,25 +153,26 @@ int main(int argc, char** argv) {
 				sessions.push_back(std::make_unique<Cluster::Session>(std::move(command)));
 			}
 		}
-		int selected = 0;
+		std::size_t selected = 0;
 		hosts[0].usage_open=initial_usage; hosts[0].usage_cluster=not initial_detail;
 		bool detail = initial_detail, dirty = true, editing_filter = false, help = false;
 		std::string filter_draft;
+		std::optional<std::string> host_number;
 		auto collect = [&] {
 			bool changed=false;
 			std::vector<Protocol::Subscription> requests;
 			for (std::size_t i=0; i<hosts.size(); ++i) {
 				Protocol::Subscription request;
 				request.interval_ms=interval;
-				request.detail=request.processes=detail and i==std::size_t(selected);
+				request.detail=request.processes=detail and i==selected;
 				request.sort=hosts[i].sort; request.filter=hosts[i].filter;
 				request.limit=500; request.reverse=hosts[i].reverse;
 				if (request.processes and hosts[i].proc_detail) {
 					request.selected_pid=hosts[i].selected_pid;
 					request.selected_start=hosts[i].selected_start;
 				}
-				requests.push_back(request);
-				if (not https) changed=sessions[i]->tick(hosts[i],request) or changed;
+				if (https) requests.push_back(std::move(request));
+				else changed=sessions[i]->tick(hosts[i],request) or changed;
 			}
 			return https ? https->tick(hosts,requests) : changed;
 		};
@@ -225,7 +230,8 @@ int main(int argc, char** argv) {
 					const int x=4,y=3,w=std::min(width-8,100),h=19;
 					frame << Draw::createBox(x,y,w,h,Theme::c("hi_fg"),true,"Keys","? / Esc close",0,style);
 					int row=y+1;
-					for (const auto& text : {"Tab / 1-4: switch host    Esc: overview    q: quit",
+					for (const auto& text : {"Tab / Shift+Tab: next / previous host    1-4: host on this page",
+						"Overview: PgUp/PgDn pages   Home/End first/last   # jump to host number",
 						"Up/Down or j/k: select process   PgUp/PgDn: scroll   Home/End",
 						"Enter: toggle selected process details (PID + start time)",
 						"c / m: CPU / memory sort   s: cycle sort   R: reverse",
@@ -244,6 +250,9 @@ int main(int argc, char** argv) {
 				}
 				if (editing_filter and width>=80 and height>=24)
 					frame << "\x1b[" << height-1 << ";2H" << std::string(width-3,' ') << "\x1b[" << height-1 << ";2HFilter (name / user:TEXT): " << Cluster::safe_text(filter_draft,width-29);
+				if (host_number and width>=80 and height>=24)
+					frame << Mv::to(height-1,2) << std::string(width-3,' ') << Mv::to(height-1,2)
+						<< "Host number (1-" << hosts.size() << ", Enter / Esc): " << *host_number << "_";
 				terminal.present(frame.str(),width,height);
 				dirty = false;
 			}
@@ -255,6 +264,21 @@ int main(int argc, char** argv) {
 			if (input_key.empty()) continue;
 			const char key=input_key.size()==1 ? input_key.front() : '\0';
 			if (help) { if (key=='?' or key=='q' or input_key=="escape") help=false; dirty=true; continue; }
+			if (host_number) {
+				if (input_key=="escape") host_number.reset();
+				else if (key=='\r' or key=='\n') {
+					std::size_t number{};
+					const auto* end = host_number->data()+host_number->size();
+					const auto parsed = std::from_chars(host_number->data(),end,number);
+					if (parsed.ec==std::errc{} and parsed.ptr==end and number>0 and number<=hosts.size()) {
+						selected=number-1; detail=true; host_number.reset();
+					} else host_number->clear();
+				} else if (key==127 or key=='\b') {
+					if (not host_number->empty()) host_number->pop_back();
+				} else if (key>='0' and key<='9' and host_number->size()<=std::numeric_limits<std::size_t>::digits10)
+					host_number->push_back(key);
+				dirty=true; continue;
+			}
 			if (editing_filter) {
 				if (key=='\r' or key=='\n') { hosts[selected].filter=filter_draft; editing_filter=false; }
 				else if (input_key=="escape") editing_filter=false;
@@ -329,7 +353,15 @@ int main(int argc, char** argv) {
 				else if (input_key=="end") delta=10000;
 				if (delta) { Cluster::move_card(hosts[selected],delta); dirty=true; continue; }
 			}
+			const auto first = Cluster::first_host_on_page(selected);
 			if (key == '\t') selected = (selected + 1) % hosts.size();
+			else if (input_key=="backtab") selected = selected ? selected-1 : hosts.size()-1;
+			else if (not detail and key=='#') host_number.emplace();
+			else if (not detail and input_key=="home") selected=0;
+			else if (not detail and input_key=="end") selected=hosts.size()-1;
+			else if (not detail and input_key=="pageup" and first>0) selected=first-Cluster::hosts_per_page;
+			else if (not detail and input_key=="pagedown" and hosts.size()-first>Cluster::hosts_per_page)
+				selected=first+Cluster::hosts_per_page;
 			else if (key == '\r' or key == '\n') {
 				if (not detail) detail=true;
 				else if (hosts[selected].proc_detail) hosts[selected].proc_detail=false;
@@ -339,7 +371,10 @@ int main(int argc, char** argv) {
 				}
 			}
 			else if (input_key=="escape") { if (hosts[selected].proc_detail) hosts[selected].proc_detail=false; else detail=false; }
-			else if (key >= '1' and key < '1'+int(hosts.size())) { selected = key - '1'; detail = true; }
+			else if (key >= '1' and key <= '4') {
+				const auto slot = std::size_t(key-'1');
+				if (slot < hosts.size()-first) { selected=first+slot; detail=true; }
+			}
 			else if (detail and key=='c') hosts[selected].sort="cpu";
 			else if (detail and key=='m') hosts[selected].sort="rss";
 			else if (detail and key=='/') { hosts[selected].cards_focus=false; editing_filter=true; filter_draft=hosts[selected].filter; }

@@ -70,6 +70,30 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(server['listen'], '127.0.0.1')
         self.assertEqual(before, {p: p.read_bytes() for p in before})
 
+    def test_large_hub_inventory_survives_install_and_update(self):
+        config = self.source / 'config/enrollment/server/server.json'
+        settings = json.loads(config.read_text())
+        ids = [f'node-{i:03}-' + 'x' * 48 for i in range(140)]
+        settings['hosts'] = []
+        settings['viewers'] = []
+        for host in ids:
+            for role, group in (('agent', 'hosts'), ('viewer', 'viewers')):
+                token_file = f'{role}-{host}.token'
+                (config.parent / token_file).write_text(role + host)
+                item = {'id': host, 'token_file': token_file}
+                if role == 'viewer':
+                    item['hosts'] = ids
+                settings[group].append(item)
+        config.write_text(json.dumps(settings))
+        self.assertGreater(config.stat().st_size, 1024 * 1024)
+        files = deploy.enrollment(self.source, True)
+        for path, data in files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        with mock.patch.object(deploy, 'ordinary_parents'):
+            deploy.check_targets(files, True)
+        self.assertEqual(deploy.enrollment(self.root, True, system=True), files)
+
     def test_source_reference_cannot_escape_or_follow_symlink(self):
         path = self.source / 'config/node/agent.json'
         data = json.loads(path.read_text())

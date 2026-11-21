@@ -1,6 +1,6 @@
-# 四机终端监控使用说明
+# 多机终端监控使用说明
 
-当前 0.6.0 版已实现真实 Linux 采集器 `btop-agent`、本机管道模式、最多四条独立 SSH 连接，以及采用原版 btop 绘图组件的总览和单机详情。`--demo` 仍可运行四台模拟主机；只有该模式使用模拟数据。新增的 [HTTPS 集中模式](https.md) 支持 agent 主动上报、中心缓存和多个独立终端查看。
+当前源码支持 Linux 采集器 `btop-agent` 和本机管道模式。SSH 模式为每个指定的主机别名建立独立连接。总览每页最多显示四台，`--demo` 默认生成四台模拟主机，可用 `--demo-hosts N` 指定数量。[HTTPS 集中模式](https.md) 支持 agent 主动上报、中心缓存和多个独立终端查看。
 
 详情按提供的原版 btop 截图重排：顶部约三分之一为 CPU 双向历史图，右侧内嵌 CPU 型号、总量、逐核和负载信息；左下 MEM／DISKS 共用边框，下方为双向 NET 图及内嵌收发统计；右下整块为 PROC。操作提示放在边框及顶栏。以下 200×60 预览由程序的 `--demo --detail --once` 实际 ANSI 输出生成，使用模拟数据。
 
@@ -39,7 +39,11 @@
 
 | 按键 | 行为 |
 | --- | --- |
-| Tab、1–4 | 切换主机；数字键直接进入对应详情 |
+| Tab、Shift+Tab | 下一台／上一台主机，可跨页切换 |
+| 1–4 | 进入当前页对应位置的主机详情 |
+| PgUp、PgDn（总览） | 上一页／下一页，选中该页第一台主机 |
+| Home、End（总览） | 选中第一台／最后一台主机 |
+| #（总览） | 输入从 1 开始的主机总序号，按 Enter 打开详情，如 `#5` |
 | Enter | 从总览进入详情；详情中打开／关闭选中进程信息 |
 | Esc | 依次关闭进程详情、返回总览；过滤输入中取消修改 |
 | [、]；g | 逐核翻页；切换 CPU 总量／user／system／iowait 图 |
@@ -47,7 +51,7 @@
 | b、n | 上／下一张网卡 |
 | a；y；z | 网络自动／固定 10MiB/s 刻度；收发同尺度／独立尺度；显示累计值归零 |
 | ↑、↓ 或 j、k | 选择上一／下一进程 |
-| PgUp、PgDn；Home、End | 每次移动 10 行；到首／尾行 |
+| PgUp、PgDn、Home、End（进程列表） | 每次移动 10 行，或到首／尾行 |
 | c、m；s；R | CPU／RSS 排序；循环 CPU／RSS／PID／名称／用户／线程排序；反向排序 |
 | T；Space | 开关树视图；折叠／展开选中节点 |
 | / | 编辑进程名、`user:用户名片段` 或 `uid:数字` 过滤条件，Enter 应用 |
@@ -62,7 +66,7 @@
 登录和卡资源的展示、数据源及升级顺序见 [资源监控](resources-monitoring.md)。
 80×24 详情通过 `v` 在右侧 CARDS 与 PROC 间切换，大尺寸可同时显示。
 
-至少 120×36 时总览显示 2×2 卡片，80×24 起使用紧凑摘要；详情在两种尺寸都包含五个分区。推荐 160×48 或更大；200×60 的比例和信息密度最接近参考截图。80×24 仍保留五个分区，但会省略命令／线程列、内存曲线和网络统计框等细节，逐核信息通过 `[ ]` 翻页。
+至少 120×36 时总览显示主机卡片，每页一至两台占一行，三至四台使用两列两行。当前页有三台时，右下角显示集群汇总。五台主机分成两页，按 PgDn 后按 `1` 即可查看第五台。80×24 起使用紧凑表格，分页方式相同。翻页时所有主机继续采集。详情在两种尺寸都包含五个分区，160×48 或更大时可看到更多字段。80×24 会省略命令／线程列、内存曲线和网络统计框等细节，逐核信息通过 `[ ]` 翻页。
 
 过滤示例：按 `/`，输入 `user:dev`，再回车，显示 USER 列包含 `dev` 的进程，
 例如 `developer`。用户名忽略大小写，采用字面子串匹配，不需要 `*`；`user:` 留空时不匹配
@@ -75,18 +79,18 @@ USER 名称来自采集器启动时读取的 `/etc/passwd`；无法解析的 UID
 
 磁盘容量通过 mountinfo 的 major:minor 匹配 diskstats，包括有 sysfs 记录的分区；无法直接匹配的 overlay／特殊文件系统标记 I/O unmapped，不借用其他设备读数。容量自动查询 `/` 及 ext3／ext4／xfs／btrfs 挂载；I/O 模式逐个展示块设备，不叠加整盘与分区读写量。网卡默认包含非 loopback 接口，不将隧道与承载网卡流量相加。`z` 只调整当前客户端显示偏移，计数回退／接口身份变化后重置峰值及偏移。
 
-## 四机 SSH 模式
+## 多机 SSH 模式
 
 在各机装好同架构、运行库兼容的 agent 并配置可用 SSH 别名后：
 
 ```bash
 ./build/cluster/btop-cluster \
-  --ssh dev-01 --ssh dev-02 --ssh dev-03 --ssh dev-04
+  --ssh dev-01 --ssh dev-02 --ssh dev-03 --ssh dev-04 --ssh dev-05
 ```
 
-远端默认路径为 `/opt/btop-cluster/bin/btop-agent`，可用 `--agent-path /absolute/path/btop-agent` 统一覆盖四台机器的路径。SSH 使用已有用户配置和认证，开启 BatchMode 和严格主机密钥检查。一台连接失败时其他主机独立采集；网络故障自动退避重试，认证／协议错误可修复后按 `r`。
+远端默认路径为 `/opt/btop-cluster/bin/btop-agent`，可用 `--agent-path /absolute/path/btop-agent` 统一指定各台机器的路径。SSH 使用已有用户配置和认证，开启 BatchMode 和严格主机密钥检查。一台连接失败时其他主机独立采集；网络故障自动退避重试，认证／协议错误可修复后按 `r`。
 
-完整接入步骤见[部署说明](deployment.md)。当前尚未部署或连接用户指定的三台真实开发机；自动测试通过本地假 SSH 进程验证四路传输及单机故障隔离。`--config` 已用于 HTTPS 模式；`examples/cluster.example.json` 仍为早期 SSH 配置草案，不适用于 HTTPS。
+自动测试通过本地模拟 SSH 连接验证七路传输和单机故障隔离。新增主机时可继续追加 `--ssh 别名`。完整接入步骤见[部署说明](deployment.md)。`--config` 已用于 HTTPS 模式，`examples/cluster.example.json` 仍为早期 SSH 配置草案。
 
 ## 其他命令
 
@@ -99,6 +103,8 @@ USER 名称来自采集器启动时读取的 `/etc/passwd`；无法解析的 UID
 ./build/cluster/btop-cluster --demo --detail
 # 三台模拟服务器，第四格显示集群汇总
 ./build/cluster/btop-cluster --demo --demo-hosts 3
+# 二十三台模拟服务器，分六页显示
+./build/cluster/btop-cluster --demo --demo-hosts 23
 
 # 一帧真实详情；等待有效 CPU 差分后输出 ANSI，超时返回非零
 ./build/cluster/btop-cluster --local --detail --once --width 120 --height 36

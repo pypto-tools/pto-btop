@@ -32,11 +32,15 @@ void keys(const Json& object,std::initializer_list<const char*> allowed) {
 	for (const auto& [key,value] : object.items())
 		if (key!="_directory" and std::find(allowed.begin(),allowed.end(),key)==allowed.end()) throw std::runtime_error("Unknown configuration field: "+key);
 }
-Json config(const std::filesystem::path& path) {
+Json config(const std::filesystem::path& path,std::optional<std::size_t> byte_limit) {
 	if (not std::filesystem::is_regular_file(path)) throw std::runtime_error("Configuration must be a regular file");
-	std::ifstream input(path); std::string bytes(65537,'\0');
-	input.read(bytes.data(),bytes.size()); bytes.resize(input.gcount());
-	auto value=parse_json(bytes,65536);
+	const auto size=std::filesystem::file_size(path);
+	if (byte_limit and size>*byte_limit) throw std::runtime_error("Configuration exceeds size limit");
+	std::ifstream input(path,std::ios::binary);
+	std::string bytes(size,'\0');
+	if (not input.read(bytes.data(),bytes.size()) or input.peek()!=std::ifstream::traits_type::eof())
+		throw std::runtime_error("Could not read complete configuration");
+	auto value=parse_json(bytes,bytes.size());
 	if (not value.contains("version") or not value["version"].is_number_integer() or value["version"]!=1) throw std::runtime_error("Configuration version must be 1");
 	if (value.contains("_directory")) throw std::runtime_error("Reserved configuration field");
 	value["_directory"]=std::filesystem::absolute(path).parent_path().string();

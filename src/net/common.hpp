@@ -3,6 +3,7 @@
 #include "protocol/protocol.hpp"
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 
 namespace Net {
@@ -13,7 +14,7 @@ struct HttpError : std::runtime_error {
 	HttpError(int code,const std::string& message) : std::runtime_error(message),status(code) {}
 };
 Json parse_json(std::string_view input,std::size_t limit=max_body);
-Json config(const std::filesystem::path& path);
+Json config(const std::filesystem::path& path,std::optional<std::size_t> byte_limit=65536);
 std::string file_path(const Json&,const std::string& key);
 std::string secret(const std::string& path);
 void keys(const Json&,std::initializer_list<const char*> allowed);

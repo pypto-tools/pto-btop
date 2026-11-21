@@ -18,13 +18,13 @@ def main():
     parser.add_argument("--listen", required=True, help="Specific NetBird or loopback IP to bind")
     parser.add_argument("--server-name", required=True, help="DNS name or IP used in the HTTPS URL")
     parser.add_argument("--port", type=int, default=8443)
-    parser.add_argument("--hosts", nargs="+", required=True, help="One to four stable host IDs")
+    parser.add_argument("--hosts", nargs="+", required=True, help="One or more distinct, stable host IDs")
     args = parser.parse_args()
     address = ipaddress.ip_address(args.listen)
     if address.is_unspecified or not 1 <= args.port <= 65535:
         parser.error("Use a specific IP and a port from 1 through 65535")
-    if not 1 <= len(args.hosts) <= 4 or len(set(args.hosts)) != len(args.hosts):
-        parser.error("Use one to four distinct host IDs")
+    if len(set(args.hosts)) != len(args.hosts):
+        parser.error("Host IDs must be distinct")
     if not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", host) for host in args.hosts):
         parser.error("Invalid host ID")
     try:

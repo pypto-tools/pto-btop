@@ -45,9 +45,11 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
 
 
-def read_file(path):
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
-        raise ValueError(f"Expected a regular file of at most 1 MiB: {path}")
+def read_file(path, limit=1024 * 1024):
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"Expected a regular file: {path}")
+    if limit is not None and path.stat().st_size > limit:
+        raise ValueError(f"File exceeds {limit} bytes: {path}")
     return path.read_bytes()
 
 
@@ -85,7 +87,7 @@ def enrollment(source, hub, system=False):
         files[dest / source_name] = json_bytes(settings)
     if hub:
         config_path = source / ("config/server/server.json" if system else "config/enrollment/server/server.json")
-        settings = json.loads(read_file(config_path))
+        settings = json.loads(read_file(config_path, limit=None))
         if ipaddress.ip_address(settings["listen"]).is_unspecified:
             raise ValueError("Keep the hub bound to its existing specific NetBird address")
         dest = ROOT / "config/server"
@@ -177,7 +179,7 @@ def check_targets(files, hub):
     for path, data in files.items():
         ordinary_parents(path.parent)
         if path.exists() or path.is_symlink():
-            if read_file(path) != data:
+            if read_file(path, limit=max(1024 * 1024, len(data))) != data:
                 raise ValueError(f"Existing enrollment differs; refusing to replace: {path}")
     managed = {COMMAND: wrapper(), UPDATE_COMMAND: update_wrapper()}
     for role in ("server", "agent") if hub else ("agent",):

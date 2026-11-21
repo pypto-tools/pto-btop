@@ -3,9 +3,11 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -15,6 +17,13 @@
 
 namespace Cluster {
 
+inline constexpr std::size_t hosts_per_page = 4;
+inline constexpr std::size_t default_demo_hosts = 4;
+
+constexpr std::size_t first_host_on_page(std::size_t selected) {
+	return selected - selected % hosts_per_page;
+}
+
 struct Rect {
 	int x, y, width, height;
 };
@@ -23,7 +32,9 @@ enum class Layout { cards, compact, too_small };
 
 struct Geometry {
 	Layout layout;
+	std::size_t first, visible;
 	std::vector<Rect> cards;
+	std::optional<Rect> summary;
 };
 
 struct Host {
@@ -60,7 +71,7 @@ struct Host {
 };
 
 struct OverviewTotals {
-	int online=0, cpu_hosts=0, memory_hosts=0, card_hosts=0, queue_hosts=0;
+	std::size_t online=0, cpu_hosts=0, memory_hosts=0, card_hosts=0, queue_hosts=0;
 	std::uint64_t cores=0, memory_total=0, memory_available=0, free_cards=0, total_cards=0, waiting=0;
 	double cpu=-1;
 	bool cards_partial=false, queue_partial=false;
@@ -79,13 +90,13 @@ std::string resource_status(const Host& host, const std::string& name);
 std::string card_summary(const Host& host, bool compact = false);
 std::string queue_summary(const Host& host);
 std::string session_summary(const Host& host, bool compact = false);
-int usage_overlay_rows(const std::vector<Host>& hosts,int selected,int height);
+int usage_overlay_rows(const std::vector<Host>& hosts,std::size_t selected,int height);
 int usage_visible_rows(int height,bool full);
 std::string usage_summary(const Host& host);
 std::string usage_cluster_summary(const std::vector<Host>& hosts);
-void move_usage(std::vector<Host>& hosts,int selected,int delta,bool cluster);
+void move_usage(std::vector<Host>& hosts,std::size_t selected,int delta,bool cluster);
 std::string usage_panel(const Host& host,const Rect& rect,const Draw::Style& style,bool folded=false);
-std::string usage_overlay(const std::vector<Host>& hosts,int selected,int width,int height,const Draw::Style& style);
+std::string usage_overlay(const std::vector<Host>& hosts,std::size_t selected,int width,int height,const Draw::Style& style);
 Protocol::Json demo_usage(int index);
 std::string users_overlay(const Host& host, int width, int height, const Draw::Style& style);
 void clear_histories(Host& host);
@@ -93,13 +104,13 @@ const Protocol::Json& metric_data(const Host& host, std::string_view name);
 const Protocol::Json& metric_items(const Protocol::Json& value, const char* key = "items");
 std::string process_key(const Protocol::Json& value);
 
-Geometry layout(int width, int height, int count);
-std::vector<Host> demo_hosts(int interval_ms = 2000);
+Geometry layout(int width, int height, std::size_t count, std::size_t selected = 0);
+std::vector<Host> demo_hosts(int interval_ms = 2000, std::size_t count = default_demo_hosts);
 void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms = 2000);
 void ingest(Host& host, const Protocol::Json& snapshot);
 std::string safe_text(std::string_view text, int columns);
 std::string detail_view(const Host& host, int width, int height, const Draw::Style& style);
 std::string render(const std::vector<Host>& hosts, int width, int height,
-	int selected, bool detail, const Draw::Style& style);
+	std::size_t selected, bool detail, const Draw::Style& style);
 
 }

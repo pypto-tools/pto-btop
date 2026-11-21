@@ -31,18 +31,26 @@ for width, height in ((120, 36), (160, 48), (80, 24), (119, 36), (40, 10), (1, 1
     elif width > 35:
         assert "Resize terminal" in rendered
 
-# The fourth grid cell is a summary, not a selectable fourth server.
-for width, height in ((120, 36), (160, 48), (200, 60), (121, 37), (80, 24)):
-    for theme in ("Default", "TTY"):
-        result = subprocess.run([binary, "--demo", "--demo-hosts", "3", "--once",
-                                 "--width", str(width), "--height", str(height), "--theme", theme],
-                                capture_output=True, text=True, check=True, timeout=10)
-        rendered = screen(result.stdout, width, height)
-        assert ("cluster | overview" in rendered) == (width >= 120 and height >= 36)
-        assert "dev-04" not in rendered
-        assert "1-3 Host" in rendered and "1-4 Host" not in rendered
-        for host in ("dev-01", "dev-02", "dev-03"):
-            assert host in rendered
+# A spare grid cell shows a summary and has no host shortcut.
+overview_cases = [(3, width, height, theme)
+                  for width, height in ((120, 36), (160, 48), (200, 60), (121, 37), (80, 24))
+                  for theme in ("Default", "TTY")]
+overview_cases.extend(((5, 120, 36, "Default"), (5, 121, 37, "TTY"), (5, 200, 60, "Default"),
+                       (5, 80, 24, "TTY"), (6, 120, 36, "TTY"), (6, 80, 24, "Default")))
+for count, width, height, theme in overview_cases:
+    result = subprocess.run([binary, "--demo", "--demo-hosts", str(count), "--once",
+                             "--width", str(width), "--height", str(height), "--theme", theme],
+                            capture_output=True, text=True, check=True, timeout=10)
+    rendered = screen(result.stdout, width, height)
+    visible = min(count, 4)
+    summary = width >= 120 and height >= 36 and visible == 3
+    assert ("cluster | overview" in rendered) == summary
+    assert f"dev-{visible + 1:02}" not in rendered
+    assert f"1-{visible} Host" in rendered
+    if count > 4:
+        assert f"Page 1/2  Hosts 1-4/{count}" in rendered
+    for host in range(1, visible + 1):
+        assert rendered.count(f"dev-{host:02}") == (2 if summary else 1)
 
 for options in (["--low-color"], ["--theme", "TTY"]):
     result = subprocess.run([binary, "--demo", "--once", *options], capture_output=True, check=True, timeout=10)
@@ -50,7 +58,7 @@ for options in (["--low-color"], ["--theme", "TTY"]):
     screen(result.stdout.decode(), 120, 36)
 
 for options in ([], ["--demo", "--interval-ms", "1"], ["--demo", "--width", "-1"], ["--bad"],
-                ["--demo", "--demo-hosts", "0"], ["--demo", "--demo-hosts", "5"],
+                ["--demo", "--demo-hosts", "0"], ["--demo", "--demo-hosts", "-1"],
                 ["--local", "--demo-hosts", "3"]):
     result = subprocess.run([binary, *options], capture_output=True, timeout=10)
     assert result.returncode != 0
@@ -65,13 +73,18 @@ for ending in ("q", signal.SIGINT, signal.SIGTERM):
     master, slave = os.openpty()
     resize(slave, 120, 36)
     original = termios.tcgetattr(slave)
-    proc = subprocess.Popen([binary, "--demo"], stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+    proc = subprocess.Popen([binary, "--demo", "--demo-hosts", "5"], stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
     try:
         view = Screen(120, 36)
         view.wait_text(master, "Tab Select")
         assert not termios.tcgetattr(slave)[3] & termios.ICANON
-        os.write(master, b"2")
-        view.wait_text(master, "Esc Overview")
+        os.write(master, b"\x1b[6~")
+        last = view.wait_text(master, "Page 2/2  Hosts 5-5/5")
+        assert "dev-05" in last and "dev-01" not in last
+        os.write(master, b"1")
+        assert "Esc Overview" in view.wait_text(master, "cpu dev-05")
+        os.write(master, b"\t")
+        view.wait_text(master, "cpu dev-01")
         os.write(master, b"\x1b")
         view.wait_text(master, "Tab Select")
         resize(slave, 80, 24)
@@ -92,6 +105,45 @@ for ending in ("q", signal.SIGINT, signal.SIGTERM):
             proc.wait()
         os.close(master)
         os.close(slave)
+
+# Page-local shortcuts and direct jumps work beyond single-digit host numbers.
+master, slave = os.openpty()
+resize(slave, 120, 36)
+proc = subprocess.Popen([binary, "--demo", "--demo-hosts", "23"], stdin=slave, stdout=slave,
+                        stderr=slave, start_new_session=True)
+try:
+    view = Screen(120, 36)
+    view.wait_text(master, "Page 1/6")
+    os.write(master, b"#21\r")
+    view.wait_text(master, "cpu dev-21")
+    os.write(master, b"\x1b")
+    last = view.wait_text(master, "Page 6/6  Hosts 21-23/23")
+    assert "cluster | overview" in last and "23/23" in last and "dev-20" not in last
+    os.write(master, b"\x1b[Z")
+    view.wait_text(master, "Page 5/6")
+    resize(slave, 80, 24)
+    assert "Hosts 17-20/23" in view.resize_when_cleared(master, 80, 24)
+    os.write(master, b"\x1b[5~")
+    view.wait_text(master, "Hosts 13-16/23")
+    os.write(master, b"4")
+    view.wait_text(master, "cpu dev-16")
+    os.write(master, b"\x1b")
+    view.wait_text(master, "Page 4/6")
+    os.write(master, b"\x1b[H")
+    view.wait_text(master, "Page 1/6")
+    os.write(master, b"\x1b[F")
+    view.wait_text(master, "Page 6/6")
+    os.write(master, b"h")
+    usage = view.wait_text(master, "card hours | all servers")
+    assert "DATA 23/23" in usage and "card hours | Hosts 21-23/23" in usage and "dev-23" in usage
+    os.write(master, b"q")
+    assert proc.wait(timeout=5) == 0
+finally:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+    os.close(master)
+    os.close(slave)
 
 # Card focus, exact owner filter, login overlay and narrow-terminal paging.
 master, slave = os.openpty()

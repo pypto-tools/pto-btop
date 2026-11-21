@@ -48,7 +48,7 @@ NetBird 提供主机之间的内网连通；监控使用 HTTPS 进行应用通�
 | --- | --- |
 | `POST /api/v1/agent/session` | 已授权 agent 建立会话，报告版本、主机和架构；不开放匿名注册 |
 | `POST /api/v1/agent/snapshots` | 上报带会话、序号、采样时间的指标；响应可携带下一轮只读采集需求 |
-| `GET /api/v1/hosts` | 主机列表及在线、过期、离线状态 |
+| `GET /api/v1/hosts` | 查看凭据获授权的主机及状态。用 `?after=` 获取首批摘要，再用返回的 `next_after` 作为下一次的 `after`，直到响应省略该字段 |
 | `GET /api/v1/hosts/{id}/snapshot` | 获取主机最新指标与对应进程视图结果 |
 | `GET /api/v1/hosts/{id}/history` | 获取指定指标的有界历史窗口 |
 | `POST /api/v1/views` | 建立／续期某个查看者的过滤、排序及进程详情需求 |

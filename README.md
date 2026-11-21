@@ -1,6 +1,6 @@
 # pto-btop
 
-A Linux terminal monitor for up to four machines, using btop's original drawing
+A multi-host Linux terminal monitor using btop's original drawing
 primitives, themes and CPU / memory / disks / network / process layout.
 
 Agents send metrics to an HTTPS hub. Each terminal viewer has independent host
@@ -10,11 +10,9 @@ verifies HTTPS certificates and uses separate agent and viewer credentials.
 
 ![Terminal detail view with simulated data](docs/cluster/detail-preview.png)
 
-**Version:** `0.6.0`, with deduplicated login counts and task-submit
-card allocation monitoring and per-user card-hour statistics. Local Linux ARM64
-collection, three-agent HTTPS tests and independent terminal sessions are covered. Check the [amd64 / arm64 build results](https://github.com/pypto-tools/pto-btop/actions/workflows/release.yml)
-for CI validation and [Releases](https://github.com/pypto-tools/pto-btop/releases)
-for published packages; a version in the source tree is not a published release.
+**Version `0.7.0`** supports SSH and HTTPS fleets of configurable size. The
+overview shows four hosts per page and keeps collecting metrics on every host.
+Native Linux amd64 and arm64 packages are available from [Releases](https://github.com/pypto-tools/pto-btop/releases).
 
 ## Install
 
@@ -32,9 +30,9 @@ Release builds bundle the GCC C++ runtime. These are not musl/Alpine packages.
 After downloading a package and its `.sha256` file:
 
 ```bash
-sha256sum --check pto-btop-0.6.0-linux-arm64.tar.gz.sha256
-tar -xzf pto-btop-0.6.0-linux-arm64.tar.gz
-cd pto-btop-0.6.0-linux-arm64
+sha256sum --check pto-btop-0.7.0-linux-arm64.tar.gz.sha256
+tar -xzf pto-btop-0.7.0-linux-arm64.tar.gz
+cd pto-btop-0.7.0-linux-arm64
 python3 install.py --check
 python3 install.py --root "$HOME/.local/share/pto-btop" --bin-dir "$HOME/.local/bin"
 "$HOME/.local/bin/pto-btop" --local --detail
@@ -48,7 +46,7 @@ and state; [installation and release guide](docs/cluster/release.md) has details
 
 If you already have a private node enrollment bundle (`node.json` and `node/`),
 download the release
-[`setup.py`](https://github.com/pypto-tools/pto-btop/releases/download/v0.6.0/setup.py)
+[`setup.py`](https://github.com/pypto-tools/pto-btop/releases/download/v0.7.0/setup.py)
 and its `.sha256` file into that directory. Verify the checksum, then run
 `python3 setup.py --proxy http://127.0.0.1:7892` to install and start the agent.
 `--check` only validates and does **not** install. See the
@@ -115,12 +113,15 @@ press `h` for usage, `p` for today / 7 / 30 days, or `H` in details to switch th
 CARDS panel. Try `--demo --demo-hosts 3 --usage` with simulated data. Real usage
 requires `task-submit --usage-monitor --json` on each monitored node.
 
-With three servers, the unused overview cell shows cluster totals and per-host
-comparisons. CPU totals are weighted by logical cores; missing or stale data is
-excluded and marked with coverage counts. The panel uses existing themes and
-shrinks to a comparison table in smaller windows. See the
-[three-host preview](docs/cluster/resources-monitoring.md#三台服务器空位显示集群汇总),
-or try `--demo --demo-hosts 3` locally.
+Add SSH aliases or enroll hosts at the HTTPS hub as your fleet grows.
+Terminals at least 120×36 show cards in up to two
+columns. A page of three also shows cluster totals and a comparison of those
+three hosts. Smaller terminals use a compact table with the same paging.
+
+Try `pto-btop --demo --demo-hosts 5`. Press PgDn and then
+`1` to open the fifth host, or type `#5` and press Enter from the overview.
+Esc returns to that host's page. PgUp/PgDn change pages, and Tab/Shift+Tab
+step through hosts across page boundaries. See the [overview guide](docs/cluster/resources-monitoring.md#总览空位显示集群汇总).
 
 Agents read Linux utmpx login records and query
 `/usr/local/bin/task-submit --monitor --json` locally. Missing/unreadable sources

@@ -3,7 +3,7 @@
 > 发布准备：对外命令与安装升级流程见 [发布说明](release.md)，项目首页见 [README](../../README.md)。以下保留从四机 SSH 原型到三机 HTTPS 接入的设计过程。
 
 从 `0.5.0-alpha.1` 起，监控包含 Linux 基础负载、登录账号／会话数和 task-submit
-卡分配状态。支持最多四台主机，每个终端独立选择和筛选；详情保留 btop 的
+卡分配状态。当前源码按配置接入主机，总览每页最多显示四台。每个终端独立选择和筛选。详情保留 btop 的
 CPU、MEM、DISKS、NET、PROC，并在 PROC 上方展示 CARDS。
 
 ## 阅读顺序
@@ -18,7 +18,7 @@ CPU、MEM、DISKS、NET、PROC，并在 PROC 上方展示 CARDS。
 | [源码与参考材料](source-study.md) | 固定版本的源码入口、耦合点、许可证、参考截图和官方资料 |
 | [实施与验收](implementation.md) | 文件级改造、接口示例、阶段依赖、测试与验收 |
 | [HTTPS 使用说明](https.md) | 中心与 agent／TUI 启动、证书配置、用户服务、安装和验证 |
-| [部署方案](deployment.md) | 构建条件、四机配置、安装和排障步骤 |
+| [部署方案](deployment.md) | 构建条件、多机 SSH 配置、安装和排障步骤 |
 | [配置样例](examples/cluster.example.json) | 4 个主机占位配置，不含真实地址或凭据 |
 | [客户端消息](examples/client.ndjson) / [采集端消息](examples/agent.ndjson) | 同一会话双向消息样例，全部为虚构数据 |
 | [来源记录](upstream.json) | 上游地址、完整提交号和实际依赖版本 |
@@ -26,7 +26,7 @@ CPU、MEM、DISKS、NET、PROC，并在 PROC 上方展示 CARDS。
 ## 已确定的需求
 
 - 终端应用，采用 btop 的视觉风格和键盘操作。
-- 同屏监控 4 台通过 NetBird 内网连接的开发机。
+- 每页同屏监控最多四台通过 NetBird 内网连接的开发机。
 - 项目、源码和材料统一放在本地 `ci-tools/btop-cluster` 仓库。
 
 ## 第一版设计决策
@@ -39,6 +39,6 @@ CPU、MEM、DISKS、NET、PROC，并在 PROC 上方展示 CARDS。
 
 ## 实机接入时需要的信息
 
-当前接入目标为 3 台 Linux 开发机，程序仍支持最多 4 台。接入实机时需确认各机发行版、CPU 架构、SSH 别名、可用认证方式、主要磁盘和网卡。真实配置存放于用户配置目录，不写入仓库。GPU／Ascend NPU 型号及监控要求尚未确定，列为后续扩展，不假定原版 btop 已支持 NPU。
+接入实机时需确认各机发行版、CPU 架构、SSH 别名、可用认证方式、主要磁盘和网卡。真实配置存放于用户配置目录，不写入仓库。GPU／Ascend NPU 型号及监控要求尚未确定，列为后续扩展，不假定原版 btop 已支持 NPU。
 
 源码基线为 `e28a2701c7208ff00ab780a68287e2204f356ba0`，内部版本字符串为 `1.4.8`；这是固定的上游 main 提交，并非已核实的发布标签。本机默认 GCC 10.3.1、CMake 3.22.0 低于要求；现已用已有 GCC 15.2.1 和项目内独立 CMake 3.31.10 完成构建，不更改系统默认工具链。

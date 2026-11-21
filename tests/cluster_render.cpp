@@ -35,10 +35,13 @@ TEST(cluster_render, remote_names_cannot_control_terminal_or_exceed_width) {
 
 TEST(cluster_layout, bounded_cards_and_compact_fallback) {
 	for (const auto& [width, height] : {std::pair{120, 36}, {160, 48}, {121, 37}}) {
-		for (int count = 1; count <= 4; ++count) {
-			const auto geometry = Cluster::layout(width, height, count);
+		for (const std::size_t count : {1,2,3,4,5,6,7,8,9,37,1000003}) {
+			const auto geometry = Cluster::layout(width, height, count, count-1);
+			const auto visible = (count-1)%4+1;
 			ASSERT_EQ(geometry.layout, Cluster::Layout::cards);
-			ASSERT_EQ(geometry.cards.size(), count);
+			EXPECT_EQ(geometry.first, count-visible);
+			ASSERT_EQ(geometry.cards.size(), visible);
+			EXPECT_EQ(geometry.summary.has_value(), visible == 3);
 			for (const auto& card : geometry.cards) {
 				EXPECT_GE(card.x, 1); EXPECT_GE(card.y, 3);
 				EXPECT_LT(card.x + card.width, width);
@@ -51,6 +54,7 @@ TEST(cluster_layout, bounded_cards_and_compact_fallback) {
 	EXPECT_EQ(Cluster::layout(120, 35, 4).layout, Cluster::Layout::compact);
 	EXPECT_EQ(Cluster::layout(79, 24, 4).layout, Cluster::Layout::too_small);
 	EXPECT_THROW(Cluster::layout(120, 36, 0), std::invalid_argument);
+	EXPECT_THROW(Cluster::layout(120, 36, 5, 5), std::invalid_argument);
 }
 
 TEST(cluster_render, explicit_theme_and_independent_graphs) {

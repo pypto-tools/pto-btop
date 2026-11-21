@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已提供 `btop-agent --stdio`、`btop-cluster --local` 和重复 `--ssh ALIAS` 接入方式；本机真实采集及四路假 SSH 测试通过。以下是接入真实开发机的操作说明，尚未替用户在远端安装或修改 SSH／NetBird 配置。
+已提供 `btop-agent --stdio`、`btop-cluster --local` 和重复 `--ssh ALIAS` 接入方式。每个 SSH 别名对应一台主机。
 
 构建命令和依赖见[使用说明](prototype.md)。当前基线要求 CMake ≥3.25、C++23、nlohmann/json ≥3.11；本机已验证 GCC 15.2.1、CMake 3.31.10、nlohmann/json 3.11.3。需按 x86_64／aarch64 架构和发行版验证 glibc／libstdc++ 兼容性。
 
@@ -36,7 +36,7 @@ Host dev-01
     Port 22
 ```
 
-其余三台分别设置 `dev-02`、`dev-03`、`dev-04`。先在普通终端核实主机身份并完成认证，再确认 BatchMode 可以无交互登录。使用已有认证方式，不在项目中保存私钥、密码或 token。
+为其余主机分别设置别名。先在普通终端核实主机身份并完成认证，再确认 BatchMode 可以无交互登录。使用已有认证方式，不在项目中保存私钥、密码或 token。
 
 用只读的一次采样检查远端程序：
 
@@ -49,22 +49,22 @@ ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes \
 
 NetBird 内网互通后，还需确保现有 SSH 服务、认证和访问策略可用。如果使用 NetBird 内置 SSH，需确认其认证支持当前的非交互连接方式；程序不会修改 NetBird 策略或绕过认证。
 
-## 启动四机监控
+## 启动多机监控
 
 ```bash
 ./build/cluster/btop-cluster \
-  --ssh dev-01 --ssh dev-02 --ssh dev-03 --ssh dev-04
+  --ssh dev-01 --ssh dev-02 --ssh dev-03 --ssh dev-04 --ssh dev-05
 ```
 
 使用其他共同安装路径时：
 
 ```bash
 ./build/cluster/btop-cluster \
-  --ssh dev-01 --ssh dev-02 --ssh dev-03 --ssh dev-04 \
+  --ssh dev-01 --ssh dev-02 --ssh dev-03 --ssh dev-04 --ssh dev-05 \
   --agent-path /absolute/shared/path/btop-agent
 ```
 
-按 `1`–`4` 进入对应主机详情，`Esc` 返回总览。主题可用 `--theme themes/dracula.theme`，采样周期可用 `--interval-ms 1000`。路径必须为绝对路径且只含字母、数字、下划线、点、斜杠和短横线；主机参数使用 SSH 别名，不直接传 `user@host`。
+按 PgUp／PgDn 翻页，`1`–`4` 打开当前页对应主机的详情，`Esc` 返回该页。主题可用 `--theme themes/dracula.theme`，采样周期可用 `--interval-ms 1000`。路径必须为绝对路径且只含字母、数字、下划线、点、斜杠和短横线，主机参数使用 SSH 别名。
 
 `--config` 已用于 [HTTPS 模式](https.md)。[cluster.example.json](examples/cluster.example.json) 仍是早期 SSH 配置草案，不能作为 HTTPS 配置使用。SSH 命令行模式仍通过共同的 `--agent-path` 指定采集器；HTTPS agent 可在各自配置中指定 mounts／disk_devices／network_interfaces。
 

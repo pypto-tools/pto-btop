@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 #include <stdexcept>
 
 #include <fmt/format.h>
@@ -16,6 +17,8 @@ namespace Cluster {
 namespace {
 
 constexpr double gib = 1024.0 * 1024 * 1024;
+
+constexpr std::array demo_user_counts{2,4,7,3};
 
 std::string at(int row, int col, const std::string& text) {
 	return Mv::to(row, col) + Theme::c("main_fg") + text;
@@ -143,15 +146,16 @@ std::string draw_card(const Host& host, const Rect& rect, bool selected, const D
 	return out+Theme::c("main_bg")+Theme::c("main_fg");
 }
 
-std::string draw_cluster_summary(const std::vector<Host>& hosts,const Rect& rect,const Draw::Style& style) {
+std::string draw_cluster_summary(const std::vector<Host>& hosts,std::span<const Host> page,const Rect& rect,const Draw::Style& style) {
 	const auto& [x,y,width,height]=rect;
-	const int left=x+2, inner=width-4, count=hosts.size();
+	const int left=x+2, inner=width-4;
+	const auto count=hosts.size();
 	const auto totals=overview_totals(hosts);
 	auto out=Draw::createBox(x,y,width,height,Theme::c("mem_box"),true,"cluster | overview","1-3 Host details",0,style);
 	auto write=[&](int row,const std::string& value,const std::string& color="main_fg") {
 		out+=Mv::to(y+row,left)+Theme::c("main_bg")+Theme::c(color)+safe_text(value,inner);
 	};
-	auto suffix=[&](int available,bool partial=false){return available<count or partial ? "*" : "";};
+	auto suffix=[&](std::size_t available,bool partial=false){return available<count or partial ? "*" : "";};
 	const auto cards=totals.card_hosts ? fmt::format("{}/{}{}",totals.free_cards,totals.total_cards,suffix(totals.card_hosts,totals.cards_partial)) : "--";
 	const auto waiting=totals.queue_hosts ? std::to_string(totals.waiting)+suffix(totals.queue_hosts,totals.queue_partial) : "--";
 	const std::array<std::string,4> labels={"ONLINE","CORES","NPU FREE","WAITING"};
@@ -170,10 +174,10 @@ std::string draw_cluster_summary(const std::vector<Host>& hosts,const Rect& rect
 		Draw::Meter meter(inner,"available");
 		out+=Mv::to(y+7,left)+meter(std::lround(100.0*totals.memory_available/totals.memory_total));
 	}
-	const int start=9, stride=std::max(1,(height-3-start)/count);
+	const int start=9, stride=std::max(1,(height-3-start)/int(page.size()));
 	write(8,stride==1 ? "HOST          CPU%   LOAD/CORE  NPU FREE" : "HOST COMPARISON  |  CPU trends / free cards","title");
-	for (int i=0;i<count;++i) {
-		const auto& host=hosts[i]; const int row=start+i*stride;
+	for (int i=0;i<int(page.size());++i) {
+		const auto& host=page[i]; const int row=start+i*stride;
 		const bool online=host.status=="ONLINE", cpu=online and host.cpu_valid and host.cores>0;
 		const auto usage=cpu ? fmt::format("{:.1f}",host.cpu) : "--";
 		const auto load=cpu ? fmt::format("{:.2f}",host.load[0]/host.cores) : "--";
@@ -205,39 +209,50 @@ std::string draw_cluster_summary(const std::vector<Host>& hosts,const Rect& rect
 
 }
 
-Geometry layout(int width, int height, int count) {
-	if (count < 1 or count > 4) throw std::invalid_argument("Expected 1 to 4 hosts");
-	if (width < 80 or height < 24) return {Layout::too_small, {}};
-	if (width < 120 or height < 36) return {Layout::compact, {}};
-	Geometry result{Layout::cards, {}};
-	const int columns = count == 1 ? 1 : 2;
-	const int rows = count <= 2 ? 1 : 2;
+Geometry layout(int width, int height, std::size_t count, std::size_t selected) {
+	if (selected >= count) throw std::invalid_argument("Invalid host selection");
+	const auto first = first_host_on_page(selected);
+	const auto visible = std::min(hosts_per_page, count - first);
+	if (width < 80 or height < 24) return {Layout::too_small, first, visible, {}, {}};
+	if (width < 120 or height < 36) return {Layout::compact, first, visible, {}, {}};
+	Geometry result{Layout::cards, first, visible, {}, {}};
+	const int columns = visible == 1 ? 1 : 2;
+	const int rows = visible <= 2 ? 1 : 2;
 	const int card_width = (width - 3) / columns;
 	const int card_height = (height - 4) / rows;
-	for (int i = 0; i < count; ++i) {
-		result.cards.push_back({2 + (i % columns) * card_width,
-			3 + (i / columns) * card_height, card_width - 1, card_height - 1});
-	}
+	auto cell = [&](int i) {
+		return Rect{2 + (i % columns) * card_width,
+			3 + (i / columns) * card_height, card_width - 1, card_height - 1};
+	};
+	for (int i = 0; i < int(visible); ++i) result.cards.push_back(cell(i));
+	if (visible == 3) result.summary = cell(3);
 	return result;
 }
 
-std::vector<Host> demo_hosts(int interval_ms) {
+std::vector<Host> demo_hosts(int interval_ms, std::size_t count) {
+	if (count == 0) throw std::invalid_argument("Expected at least one demo host");
 	std::vector<Host> hosts;
-	for (unsigned i = 0; i < 4; ++i) {
+	hosts.reserve(count);
+	const auto profiles = std::min(count, demo_user_counts.size());
+	for (std::size_t i = 0; i < profiles; ++i) {
 		Host host;
-		host.name = fmt::format("dev-{:02}", i + 1);
 		host.cores = 16 << i;
 		host.memory_total = static_cast<std::uint64_t>(gib) * (32 << i);
 		hosts.push_back(host);
 	}
-	for (unsigned tick = 0; tick < 300; ++tick) advance_demo(hosts, tick, interval_ms);
+	// Warm each simulated hardware profile once, then give each host its own history.
+	for (unsigned tick = 0; tick < 299; ++tick) advance_demo(hosts, tick, interval_ms);
+	for (std::size_t i = profiles; i < count; ++i) hosts.push_back(hosts[i % profiles]);
+	for (std::size_t i = 0; i < count; ++i) hosts[i].name = fmt::format("dev-{:02}", i + 1);
+	advance_demo(hosts, 299, interval_ms);
 	return hosts;
 }
 
 void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms) {
 	for (std::size_t i = 0; auto& host : hosts) {
-		host.cpu = std::clamp(18.0 + 17.0 * i + 14 * std::sin(tick * 0.18 + i * 1.4), 0.0, 100.0);
-		host.memory_used = static_cast<std::uint64_t>(host.memory_total * (0.22 + 0.14 * i));
+		const auto profile = i % demo_user_counts.size();
+		host.cpu = std::clamp(18.0 + 17.0 * profile + 14 * std::sin(tick * 0.18 + profile * 1.4), 0.0, 100.0);
+		host.memory_used = static_cast<std::uint64_t>(host.memory_total * (0.22 + 0.14 * profile));
 		host.load = {host.cpu / 100 * host.cores, host.cpu / 115 * host.cores, host.cpu / 130 * host.cores};
 		using Protocol::Json;
 		const auto stamp = Protocol::now_ms();
@@ -257,30 +272,30 @@ void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms) {
 				{"total_bytes",107374182400ULL},{"used_bytes",64424509440ULL},{"available_bytes",42949672960ULL}}})}},stamp,interval_ms)},
 			{"disks",Protocol::group({{"items",Json::array({{{"name","nvme0n1"},{"id","259:0"},
 				{"read_bytes_per_sec",2097152*(1+std::sin(tick*0.17))},{"write_bytes_per_sec",1048576*(1+std::cos(tick*0.13))},{"activity_pct",25+20*std::sin(tick*0.17)}}})}},stamp,interval_ms)},
-			{"network",Protocol::group({{"items",Json::array({{{"name","eth0"},{"ifindex",2},{"address","100.90.0."+std::to_string(i+1)},
+			{"network",Protocol::group({{"items",Json::array({{{"name","eth0"},{"ifindex",2},{"address",fmt::format("100.90.{}.{}",i/254%256,i%254+1)},
 				{"rx_bytes_total",1073741824ULL},{"tx_bytes_total",536870912ULL},
 				{"rx_bytes_per_sec",std::uint64_t(host.cpu*10000)},{"tx_bytes_per_sec",std::uint64_t(host.cpu*4000)}}})}},stamp,interval_ms)},
 			{"processes",Protocol::group({{"items",processes},{"total_visible",40},{"matched",40},{"returned",40},{"truncated",false}},stamp,interval_ms)}
 		};
 		Json devices=Json::array();
-		const int device_count=(i==1 or i==2) ? 16 : 8;
+		const int device_count=(profile==1 or profile==2) ? 16 : 8;
 		Json counts{{"total",device_count},{"free",0},{"allocated",0},{"reserved",0},{"disabled",0},{"external",0},{"error",0},{"unknown",0},{"occupying_users",1}};
 		for (int id=0; id<device_count; ++id) {
-			const std::string state=i==1 ? (id<device_count-2 ? "free" : "allocated") : i==2 ? "allocated" :
+			const std::string state=profile==1 ? (id<device_count-2 ? "free" : "allocated") : profile==2 ? "allocated" :
 				(id==2 or id==3 or id==5) ? "allocated" : id==6 ? "reserved" : id==7 ? "disabled" : "free";
 			counts[state]=counts[state].get<int>()+1;
 			Json allocation=nullptr, reservation=nullptr;
 			if (state=="allocated") allocation={{"task_id","task-demo-running"},{"user","developer"},{"uid",1000},{"started_at","2026-01-01T10:00:00Z"},{"elapsed_seconds",760}};
-			if (state=="reserved" or (i!=1 and i!=2 and id==5)) reservation={{"task_id","task-demo-waiting"},{"user","builder"},{"uid",1001},{"requested_devices",2}};
+			if (state=="reserved" or (profile!=1 and profile!=2 and id==5)) reservation={{"task_id","task-demo-waiting"},{"user","builder"},{"uid",1001},{"requested_devices",2}};
 			devices.push_back({{"id",std::to_string(id)},{"group_id","g"+std::to_string(id/4)},{"pool_eligible",state!="disabled"},
 				{"state",state},{"reason_codes",state=="free" ? Json::array() : Json::array({state})},{"allocation",allocation},{"reservation",reservation},{"health","unknown"}});
 		}
 		groups["cards"]=Protocol::group({{"schema_version",1},{"producer",{{"name","pto-task"},{"version","demo"}}},{"boot_id","demo-boot"},
 			{"snapshot_seq",tick},{"observed_at","2026-01-01T10:12:40Z"},{"age_ms",0},{"status","ok"},{"reason",nullptr},{"inventory_complete",true},
 			{"external_detection","unsupported"},{"scheduler",{{"state","running"},{"mode","pool_aware_reservation"},{"accepting_submissions",true},
-			{"dispatching",true},{"running_tasks",1},{"pending_tasks",i==1 ? 0 : 2},{"max_concurrent",8},{"reason",nullptr}}},{"devices",devices},{"summary",counts}},stamp,5000);
+			{"dispatching",true},{"running_tasks",1},{"pending_tasks",profile==1 ? 0 : 2},{"max_concurrent",8},{"reason",nullptr}}},{"devices",devices},{"summary",counts}},stamp,5000);
 		const std::array<std::string,7> names={"developer","builder","reviewer","runner","alice","bob","charlie"};
-		const int user_count=std::array{2,4,7,3}[i]; Json logins=Json::array();
+		const int user_count=demo_user_counts[profile]; Json logins=Json::array();
 		for (int user=0;user<user_count;++user) logins.push_back({{"user",names[user]},{"sessions",user==0 ? 2 : 1},{"first_login_at",1760000000+user*500}});
 		groups["sessions"]=Protocol::group({{"source","utmpx"},{"users",user_count},{"sessions",user_count+1},{"age_ms",0},{"items",logins}},stamp,5000);
 		groups["filesystems"]["data"]["items"].push_back({{"mount","/data"},{"device","259:1"},{"total_bytes",2199023255552ULL},{"used_bytes",1209462790553ULL},{"available_bytes",989560464999ULL}});
@@ -293,16 +308,15 @@ void advance_demo(std::vector<Host>& hosts, unsigned tick, int interval_ms) {
 			groups["processes"]["data"]["selected"]=item;
 			groups["processes"]["data"]["selected"]["detail_status"]="ok";
 		}
-		groups["card_usage"]=Protocol::group(demo_usage(i),stamp,30000,i==2 ? "partial" : "ok");
+		groups["card_usage"]=Protocol::group(demo_usage(profile),stamp,30000,profile==2 ? "partial" : "ok");
 		ingest(host,{{"groups",groups},{"wall_time",Protocol::utc_now()}});
 		++i;
 	}
 }
 
 std::string render(const std::vector<Host>& hosts, int width, int height,
-	int selected, bool detail, const Draw::Style& style) {
-	const auto geometry = layout(width, height, static_cast<int>(hosts.size()));
-	if (selected < 0 or selected >= static_cast<int>(hosts.size())) throw std::invalid_argument("Invalid host selection");
+	std::size_t selected, bool detail, const Draw::Style& style) {
+	const auto geometry = layout(width, height, hosts.size(), selected);
 	std::string out = Term::clear + Fx::reset;
 	if (geometry.layout == Layout::too_small) {
 		// Stay inside even a one-column terminal, without writing its last cell.
@@ -311,32 +325,39 @@ std::string render(const std::vector<Host>& hosts, int width, int height,
 		return out;
 	}
 	out += at(1, 2, hosts[0].simulated ? "btop-cluster | DEMO - simulated data" : "btop-cluster | LIVE");
-	const auto host_keys=hosts.size()==1 ? std::string{"1"} : "1-"+std::to_string(hosts.size());
-	const auto overview_keys="Tab Select   Enter Details   "+host_keys+" Host   h Usage   u Users   q Quit";
+	const auto page = std::span(hosts).subspan(geometry.first, geometry.visible);
+	const auto host_keys = page.size()==1 ? std::string{"1"} : "1-"+std::to_string(page.size());
+	const bool paged = hosts.size() > hosts_per_page;
+	const auto overview_keys = paged
+		? "Tab Select  PgUp/PgDn Page  "+host_keys+" Host  Enter Details  # Jump  ? Help  q Quit"
+		: "Tab Select   Enter Details   "+host_keys+" Host   h Usage   u Users   q Quit";
+	if (paged and not detail) {
+		auto position = fmt::format("Page {}/{}  Hosts {}-{}/{}",selected/hosts_per_page+1,
+			1+(hosts.size()-1)/hosts_per_page,geometry.first+1,geometry.first+page.size(),hosts.size());
+		out += at(1,width-1-int(position.size()),position);
+	}
 	if (detail) {
 		out += detail_view(hosts.at(selected), width, height, style);
 		const std::string controls=host_keys+" Host  h Usage  Esc Overview  ? Help  q Quit";
 		out += at(1,width-1-static_cast<int>(controls.size()),controls);
 	} else if (geometry.layout == Layout::cards) {
 		int grid_height=0;
-		for (std::size_t i=0;i<hosts.size();++i) grid_height=std::max(grid_height,chip_grid(hosts[i],geometry.cards[i]).height);
-		for (std::size_t i=0;i<hosts.size();++i)
-			out+=draw_card(hosts[i],geometry.cards[i],i==static_cast<std::size_t>(selected),style,grid_height);
-		if (hosts.size()==3) {
-			const auto& below=geometry.cards[2];
-			out+=draw_cluster_summary(hosts,{geometry.cards[1].x,below.y,below.width,below.height},style);
-		}
+		for (std::size_t i=0;i<page.size();++i) grid_height=std::max(grid_height,chip_grid(page[i],geometry.cards[i]).height);
+		for (std::size_t i=0;i<page.size();++i)
+			out+=draw_card(page[i],geometry.cards[i],geometry.first+i==selected,style,grid_height);
+		if (geometry.summary) out+=draw_cluster_summary(hosts,page,*geometry.summary,style);
 		out += at(height - 1, 2, overview_keys);
 	} else {
 		out += at(3,2,"HOST       CPU    MEM used/total GiB    NPU free  WAIT   USERS/SESS");
-		for (std::size_t i=0; i<hosts.size(); ++i) {
-			const auto& host=hosts[i];
+		for (std::size_t i=0; i<page.size(); ++i) {
+			const auto& host=page[i];
 			const auto& cards=metric_data(host,"cards");
 			const auto card_state=resource_status(host,"cards");
 			std::string waiting="--";
 			if ((card_state=="ok" or card_state=="partial") and cards.at("scheduler").at("pending_tasks").is_number_integer()) waiting=std::to_string(cards.at("scheduler").at("pending_tasks").get<std::uint64_t>());
-			out+=Mv::to(5+i*3,2)+Theme::c(i==static_cast<std::size_t>(selected) ? "hi_fg" : "main_fg");
-			out+=safe_text(fmt::format("{} {:7} {:5.1f}% {:6.0f}/{:<6.0f}        {:8}  {:5}  {}",i==static_cast<std::size_t>(selected) ? ">" : " ",safe_text(host.name,7),host.cpu,host.memory_used/gib,host.memory_total/gib,card_summary(host,true),waiting,session_summary(host,true)),width-3);
+			const bool active = geometry.first+i == selected;
+			out+=Mv::to(5+i*3,2)+Theme::c(active ? "hi_fg" : "main_fg");
+			out+=safe_text(fmt::format("{} {:7} {:5.1f}% {:6.0f}/{:<6.0f}        {:8}  {:5}  {}",active ? ">" : " ",safe_text(host.name,7),host.cpu,host.memory_used/gib,host.memory_total/gib,card_summary(host,true),waiting,session_summary(host,true)),width-3);
 			if (not host.simulated) out+=at(6+i*3,4,safe_text(host.status+" "+host.error,width-6));
 		}
 

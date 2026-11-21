@@ -68,7 +68,8 @@ public:
 	explicit Hub(const Json& settings) {
 		Net::keys(settings,{"version","listen","port","cert_file","key_file","hosts","viewers"});
 		const auto& hosts=settings.at("hosts"); const auto& users=settings.at("viewers");
-		if (not hosts.is_array() or hosts.empty() or hosts.size()>4 or not users.is_array() or users.empty() or users.size()>16) throw std::runtime_error("Configure 1..4 hosts and 1..16 viewers");
+		if (not hosts.is_array() or hosts.empty() or not users.is_array() or users.empty())
+			throw std::runtime_error("Configure at least one host and one viewer");
 		std::set<std::string> credentials,ids;
 		for (auto item : hosts) {
 			Net::keys(item,{"id","label","token_file"});
@@ -87,7 +88,7 @@ public:
 			item["_directory"]=settings["_directory"];
 			user.credential=Net::digest(Net::secret(Net::file_path(item,"token_file")));
 			if (not credentials.insert(user.credential).second) throw std::runtime_error("Credentials must be distinct");
-			if (not item.at("hosts").is_array() or item.at("hosts").size()>4) throw std::runtime_error("Invalid viewer host list");
+			if (not item.at("hosts").is_array()) throw std::runtime_error("Invalid viewer host list");
 			for (const auto& id : item.at("hosts")) {
 				const auto host=id.get<std::string>();
 				if (not machines_.contains(host)) throw std::runtime_error("Viewer references unknown host");
@@ -153,8 +154,20 @@ public:
 		const auto& user=viewer(request);
 		if (request.method=="GET" and path=="/api/v1/hosts") {
 			Json hosts=Json::array();
-			for (const auto& [id,machine] : machines_) if (user.hosts.contains(id)) hosts.push_back({{"id",id},{"label",machine.label},{"status",status(machine)},{"hello",machine.hello}});
-			return {{"epoch",epoch_},{"hosts",hosts}};
+			const bool paged=request.has_param("after");
+			auto it=paged ? user.hosts.upper_bound(request.get_param_value("after")) : user.hosts.begin();
+			// Paged discovery only needs small inventory records. Legacy readers also receive hello.
+			constexpr std::size_t discovery_page_size=128;
+			for (;it!=user.hosts.end() and (not paged or hosts.size()<discovery_page_size);++it) {
+				const auto& machine=machines_.at(*it);
+				Json item={{"id",*it},{"label",machine.label},{"status",status(machine)}};
+				if (not paged) item["hello"]=machine.hello;
+				hosts.push_back(std::move(item));
+			}
+			Json result={{"epoch",epoch_}};
+			if (it!=user.hosts.end()) result["next_after"]=hosts.back().at("id");
+			result["hosts"]=std::move(hosts);
+			return result;
 		}
 		if (request.method=="POST" and path=="/api/v1/views") {
 			const auto body=Net::parse_json(request.body); const auto host=Net::identifier(body,"host_id");
@@ -214,7 +227,7 @@ int main(int argc,char** argv) {
 		if (argc==2 and std::string_view(argv[1])=="--version") { std::cout<<"pto-btop-server " BTOP_CLUSTER_VERSION "\n"; return 0; }
 		if (argc==2 and std::string_view(argv[1])=="--help") { std::cout<<"btop-server --config server.json\nHTTPS metrics hub; TLS certificate and private token files required.\n"; return 0; }
 		if (argc!=3 or std::string_view(argv[1])!="--config") throw std::runtime_error("Use --config server.json");
-		const auto settings=Net::config(argv[2]); Hub hub(settings);
+		const auto settings=Net::config(argv[2],std::nullopt); Hub hub(settings);
 		const auto address=settings.at("listen").get<std::string>();
 		in_addr ipv4{}; in6_addr ipv6{};
 		const bool specific=(inet_pton(AF_INET,address.c_str(),&ipv4)==1 and ipv4.s_addr!=INADDR_ANY) or

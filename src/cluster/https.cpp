@@ -142,13 +142,24 @@ HttpsFeed::HttpsFeed(const std::string& path,std::vector<Host>& hosts) {
 	const auto settings=Net::config(path);
 	Net::keys(settings,{"version","server","ca_file","token_file"});
 	impl_=std::make_unique<Impl>(settings);
-	const auto discovery=impl_->http.request("GET","/api/v1/hosts"); const auto& items=discovery.at("hosts");
-	if (not items.is_array() or items.empty() or items.size()>4) throw std::runtime_error("HTTPS hub must expose 1..4 hosts");
-	for (const auto& item : items) {
-		impl_->ids.push_back(Net::identifier(item,"id"));
-		Host host; host.name=item.at("label").get<std::string>(); host.simulated=false;
-		host.cpu_valid=host.memory_valid=false; host.status="CONNECTING"; hosts.push_back(std::move(host));
-	}
+	std::string after,epoch;
+	do {
+		const auto discovery=impl_->http.request("GET","/api/v1/hosts?after="+after);
+		const auto& items=discovery.at("hosts");
+		if (not items.is_array() or items.empty()) throw std::runtime_error("HTTPS hub must expose at least one host");
+		if (not after.empty() and discovery.at("epoch")!=epoch)
+			throw std::runtime_error("Hub restarted during host discovery");
+		for (const auto& item : items) {
+			impl_->ids.push_back(Net::identifier(item,"id"));
+			Host host; host.name=item.at("label").get<std::string>(); host.simulated=false;
+			host.cpu_valid=host.memory_valid=false; host.status="CONNECTING"; hosts.push_back(std::move(host));
+		}
+		if (not discovery.contains("next_after")) break;
+		if (after.empty()) epoch=discovery.at("epoch").get<std::string>();
+		const auto next=Net::identifier(discovery,"next_after");
+		if (next<=after or next!=impl_->ids.back()) throw std::runtime_error("Invalid host discovery cursor");
+		after=next;
+	} while (true);
 	impl_->cached=impl_->pending=hosts; impl_->ready.resize(hosts.size(),false); impl_->desired.resize(hosts.size()); impl_->pending_requests.resize(hosts.size());
 	impl_->worker=std::jthread([&](std::stop_token token){impl_->run(token);});
 }

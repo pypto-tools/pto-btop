@@ -81,13 +81,14 @@ void Session::reconnect(Host& host) {
 }
 
 bool Session::tick(Host& host, Protocol::Subscription options) {
-	const auto now = Protocol::now_ms();
 	bool changed = false;
 	try {
 		if (child_ < 0) {
-			if (fatal_ or now < next_retry_) return false;
+			if (fatal_ or Protocol::now_ms() < next_retry_) return false;
 			start(); host.status="CONNECTING"; host.error.clear(); changed=true;
 		}
+		// start() sets started_ after the fork. Measure handshake age from then.
+		const auto now = Protocol::now_ms();
 		options.request_id=1;
 		desired_ = Protocol::encode(options).dump(-1,' ',false,Json::error_handler_t::replace);
 		char bytes[8192];

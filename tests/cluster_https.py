@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Real loopback HTTPS hub, three agents and three independent terminal viewers."""
+"""Real loopback HTTPS hub, five agents and three independent terminal viewers."""
 import copy
 import http.client
 import http.server
@@ -58,13 +58,19 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
     bundle = root / "config"
+    live_hosts = ("a", "b", "c", "d", "e")
+    inventory_hosts = tuple(f"node-{n:03}" for n in range(130))
+    host_ids = (*live_hosts, *inventory_hosts, "unit")
     subprocess.run([sys.executable, initializer, "--directory", str(bundle), "--listen", "127.0.0.1",
-                    "--server-name", "127.0.0.1", "--port", str(port), "--hosts", "a", "b", "c", "unit"],
+                    "--server-name", "127.0.0.1", "--port", str(port), "--hosts", *host_ids],
                    check=True, capture_output=True, timeout=30)
     settings_path = bundle / "server/server.json"
     settings = json.loads(settings_path.read_text())
     for viewer in settings["viewers"]:
-        viewer["hosts"] = ["a", "b", "c"] if viewer["id"] != "unit" else ["unit"]
+        if viewer["id"] in live_hosts:
+            viewer["hosts"] = live_hosts
+        elif viewer["id"] == "unit":
+            viewer["hosts"] = ["unit"]
     limited_token = secrets.token_hex(32)
     (bundle / "server/limited.token").write_text(limited_token)
     (bundle / "server/limited.token").chmod(0o600)
@@ -72,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
     settings_path.write_text(json.dumps(settings))
     ctx = ssl.create_default_context(cafile=str(bundle / "ca.pem"))
     tokens = {(host, role): (bundle / f"nodes/{host}/{role}.token").read_text().strip()
-              for host in ("a", "b", "c", "unit") for role in ("agent", "viewer")}
+              for host in host_ids for role in ("agent", "viewer")}
 
     def api(method, path, token, body=None, expected=200):
         connection = http.client.HTTPSConnection("127.0.0.1", port, context=ctx, timeout=5)
@@ -105,6 +111,35 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         api("GET", "/api/v1/hosts/b/snapshot", limited_token, expected=403)
         api("POST", "/api/v1/agent/session", tokens["a", "viewer"], {}, expected=403)
         assert [host["id"] for host in api("GET", "/api/v1/hosts", limited_token)["hosts"]] == ["a"]
+        assert api("GET", "/api/v1/hosts?after=a", limited_token)["hosts"] == []
+        inventory_token = tokens[inventory_hosts[0], "viewer"]
+        page = api("GET", "/api/v1/hosts?after=", inventory_token)
+        ids = [host["id"] for host in page["hosts"]]
+        assert page["next_after"] == ids[-1]
+        following = api("GET", "/api/v1/hosts?after=" + page["next_after"], inventory_token)
+        assert "next_after" not in following
+        assert ids + [host["id"] for host in following["hosts"]] == sorted(host_ids)
+
+        # Discover both HTTPS pages, then jump to the last four-host TUI page.
+        master, slave = os.openpty()
+        resize(slave, 80, 24)
+        config = bundle / f"nodes/{inventory_hosts[0]}/client.json"
+        viewer = launch([client_binary, "--config", str(config)], stdin=slave, stdout=slave, stderr=slave)
+        try:
+            inventory = Screen(80, 24)
+            inventory.wait_text(master, "Hosts 1-4/136")
+            os.write(master, b"\x1b[F")
+            inventory.wait_text(master, "Hosts 133-136/136")
+            os.write(master, b"4")
+            inventory.wait_text(master, "cpu unit")
+            os.write(master, b"q")
+            assert viewer.wait(timeout=5) == 0
+        finally:
+            if viewer.poll() is None:
+                viewer.terminate()
+                viewer.wait(timeout=5)
+            os.close(master)
+            os.close(slave)
 
         # A separately authorized test host exercises atomic validation and session ordering.
         hello = {"version": 1, "type": "hello", "host": {"os": "linux", "arch": "fixture"}}
@@ -226,7 +261,7 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         print("New agent / legacy hub feature negotiation: PASS", flush=True)
 
         agents = []
-        for host in ("a", "b", "c"):
+        for host in live_hosts:
             path = bundle / f"nodes/{host}/agent.json"
             config = json.loads(path.read_text())
             config["interval_ms"] = 1000
@@ -234,9 +269,9 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
             log = open(root / f"agent-{host}.log", "wb")
             agents.append(launch([agent_binary, "--config", str(path)], stdout=log, stderr=log))
         until(lambda: all(api("GET", f"/api/v1/hosts/{host}/snapshot", tokens["a", "viewer"])["seq"] >= 2
-                          for host in ("a", "b", "c")), 12)
+                          for host in live_hosts), 12)
 
-        for host in ("a", "b", "c"):
+        for host in live_hosts:
             groups = api("GET", f"/api/v1/hosts/{host}/snapshot", tokens["a", "viewer"])["snapshot"]["groups"]
             assert "cards" in groups and "sessions" in groups
 
@@ -287,16 +322,16 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         print("Independent name/user filters, sorts, selected PID outside filter, view ownership: PASS", flush=True)
 
         # Terminal read paths operate concurrently and remain responsive during hub failure.
-        for index, host in enumerate(("a", "b", "c")):
+        for host, shortcut in (("a", b"1"), ("b", b"2"), ("e", b"\x1b[6~1")):
             master, slave = os.openpty()
             resize(slave, 120, 36)
             original = termios.tcgetattr(slave)
-            process = launch([client_binary, "--config", str(bundle / f"nodes/{host}/client.json"), "--detail"],
+            process = launch([client_binary, "--config", str(bundle / f"nodes/{host}/client.json")],
                              stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
             screen = Screen(120, 36)
-            screen.wait_text(master, "Esc Overview", timeout=10)
-            os.write(master, str(index + 1).encode())
-            screen.wait_text(master, "ONLINE", timeout=10)
+            screen.wait_text(master, "Tab Select", timeout=10)
+            os.write(master, shortcut)
+            screen.wait_text(master, f"cpu {host} | ONLINE", timeout=10)
             ptys.append((master, slave, process, screen, original))
         os.write(ptys[0][0], b"m/btop-agent\r")
         ptys[0][3].wait_text(ptys[0][0], "/btop-agent", timeout=10)
@@ -330,8 +365,8 @@ with tempfile.TemporaryDirectory(prefix="btop-https-test-") as temporary:
         assert "TREE" not in ptys[2][3].text()
         check = subprocess.run([client_binary, "--config", str(bundle / "nodes/c/client.json"), "--check"],
                                capture_output=True, text=True, timeout=18)
-        assert check.returncode == 0 and check.stdout.count("ONLINE") == 3, check.stdout + check.stderr
-        print("Three real agents, three independent PTYs and --check: PASS", flush=True)
+        assert check.returncode == 0 and check.stdout.count("ONLINE") == len(live_hosts), check.stdout + check.stderr
+        print("Five real agents, three independent PTYs and --check: PASS", flush=True)
 
         agents[2].terminate()
         assert agents[2].wait(timeout=5) == 0

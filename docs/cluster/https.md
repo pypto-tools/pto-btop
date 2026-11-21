@@ -2,9 +2,9 @@
 
 0.4.0 系列已实现 HTTPS 上报、中心缓存和终端读取。三台机器各运行一个 agent、各自打开 TUI；中心运行在其中一台。现有 `--local`、`--ssh`、`--demo` 保留。
 
-当前源码版本为 `0.6.0`，安装与升级见 [发布说明](release.md)。对外命令为 `pto-btop`、`pto-btop-agent`、`pto-btop-server`，下文仍使用兼容的源码构建程序名。
+当前源码版本为 `0.7.0`，安装与升级见 [发布说明](release.md)。对外命令为 `pto-btop`、`pto-btop-agent`、`pto-btop-server`，下文仍使用兼容的源码构建程序名。
 
-发行包提供 Linux amd64 / arm64 两种原生构建；CI 覆盖三个真实 agent、三个独立终端的 HTTPS 集成测试。具体节点的部署版本和连接状态请使用 `--check` 或总览确认。
+发行包提供 Linux amd64 / arm64 两种原生构建。当前源码的 HTTPS 集成测试覆盖五个本地 agent 和三个独立终端。具体节点的部署版本和连接状态请使用 `--check` 或总览确认。
 
 0.5.0 新增登录人数和 task-submit 卡状态。先升级并重启中心，再升级各 agent / TUI；配置和凭据继续复用。详见 [资源监控](resources-monitoring.md)。
 
@@ -99,7 +99,9 @@ python scripts/https-init.py \
 
 agent 使用相同连接字段，`token_file` 指向它自己的 `agent.token`；可增加 `interval_ms`（1000～10000）、`mounts`、`disk_devices`、`network_interfaces`。空选择列表沿用现有自动选择规则。采样周期由 agent 决定，TUI 的 `--interval-ms` 不改变 HTTPS agent 的周期。
 
-服务端由生成工具输出：包含 `listen`、`port`、`cert_file`、`key_file`、`hosts` 和 `viewers`。每个 host 有稳定 `id`、可选 `label`、独立 `token_file`；每个 viewer 有自己的 `id`、`token_file` 和允许查看的 `hosts` 列表。支持 1～4 台主机、最多 16 个查看凭据；绑定地址必须是明确 IP，不能使用通配监听地址。
+服务端配置包含 `listen`、`port`、`cert_file`、`key_file`、`hosts` 和 `viewers`。每个 host 有稳定 `id`、可选 `label` 和独立 `token_file`。每个 viewer 有自己的 `id`、`token_file` 和允许查看的 `hosts` 列表。主机和查看凭据的数量由配置决定，监听地址需指定具体 IP。查看端按主机 ID 分批读取授权列表，总览每页最多显示四台。
+
+已有固定主机数上限的部署需要先更新中心和查看端。此后接入新主机只需更新配置。沿用现有 CA 和服务端证书，为新节点创建独立 agent token，在 `server.json` 的 `hosts` 中追加该节点，并将其 ID 加入需要访问它的 `viewers[].hosts`。新节点的 `agent.json` 使用原中心地址、CA 证书和新 token。重启中心、启动新节点的 agent，再重新打开查看端。也可用 `--check` 查看全部获授权主机的连接状态。
 
 凭据、证书和主机配置在启动时读取。修改后重启对应组件；服务端重启会清空内存历史和查看租约。
 
@@ -134,8 +136,8 @@ systemctl --user enable --now btop-server.service
 
 ## 验证与边界
 
-新增验证覆盖真实 TLS 的 CA／主机名检查、角色与主机访问权限、会话与递增序号、非法快照不推进缓存、单轮扫描的独立进程查询、三个 agent 与三个 PTY、查看租约过期、单机离线、中心重启恢复，以及故障期间终端退出和终端属性恢复。原有采集／SSH／布局／防闪烁测试继续保留。
+集成测试使用 136 台已配置主机验证分批发现与终端翻页，使用五个本地 agent 和三个独立终端验证实时查看。测试也覆盖 TLS 的 CA／主机名检查、角色与主机访问权限、会话与递增序号、非法快照不推进缓存、单轮扫描的独立进程查询、查看租约过期、单机离线、中心重启及终端属性恢复。
 
-JSON 消息及响应限制为 8 MiB，配置文件为 64 KiB；进程扫描仍有 250ms 预算。HTTP 工作线程、任务队列、查看数量和历史点数有界。`429` 表示查看数量达到上限；`413` 表示消息或历史响应超过限制。缺失权限或超出采集预算的指标显示 unavailable／partial，不以零代替。
+JSON 消息及响应限制为 8 MiB，agent 和查看端的配置文件限制为 64 KiB，中心按本地配置文件的实际大小读取主机清单。进程扫描有 250ms 预算。每台主机最多同时处理 8 个进程查询，全中心最多同时处理 16 个。`429` 表示活跃查询达到上限，`413` 表示消息或历史响应超过限制。缺失权限或超出采集预算的指标显示 unavailable／partial。
 
 默认 2 秒采样时，6 秒无数据标记 STALE，10 秒标记 DISCONNECTED，阈值随采样周期调整。保留最后快照及时间；恢复时清理断档趋势，不填造中间采样。没有高可用、历史落盘、长时间补传或自动证书续期。真实三机长期运行、不同架构安装包以及实际 CPU／RSS／流量开销仍待实机验收。

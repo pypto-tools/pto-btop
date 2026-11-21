@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Headless protocol, local live UI, and four SSH sessions through a fake transport."""
+"""Headless protocol, local live UI, and multiple SSH sessions through a fake transport."""
 import json
 import os
 import select
@@ -183,25 +183,27 @@ with tempfile.TemporaryDirectory(prefix="btop-fake-ssh-") as temporary:
                        "os.execv(args[-2],[args[-2],args[-1]])\n")
     wrapper.chmod(0o755)
     environment = dict(os.environ, PATH=temporary + os.pathsep + os.environ["PATH"])
-    result = subprocess.run([client, "--ssh", "dev-01", "--ssh", "dev-02", "--ssh", "dev-03", "--ssh", "dev-04",
-                             "--agent-path", agent, "--once", "--interval-ms", "1000"],
-                            env=environment, capture_output=True, text=True, check=True, timeout=20)
+    aliases = [f"dev-{i:02}" for i in range(1, 8)]
+    command = [client, "--agent-path", agent, "--interval-ms", "1000"]
+    for alias in aliases:
+        command.extend(["--ssh", alias])
+    result = subprocess.run([*command, "--once"], env=environment, capture_output=True, text=True, timeout=20)
     rendered = screen(result.stdout, 120, 36)
-    for index in range(1, 5):
-        assert f"dev-{index:02}" in rendered
+    assert result.returncode == 0, result.stderr + rendered
+    for index, alias in enumerate(aliases):
+        assert (alias in rendered) == (index < 4)
+    assert "Page 1/2  Hosts 1-4/7" in rendered
     assert "SIMULATED" not in rendered
 
     environment["BTOP_TEST_FAIL_HOST"] = "dev-04"
-    failed = subprocess.run([client, "--ssh", "dev-01", "--ssh", "dev-02", "--ssh", "dev-03", "--ssh", "dev-04",
-                             "--agent-path", agent, "--once", "--interval-ms", "1000"],
-                            env=environment, capture_output=True, text=True, timeout=20)
+    failed = subprocess.run([*command, "--check"], env=environment, capture_output=True, text=True, timeout=20)
     assert failed.returncode == 1
-    rendered = screen(failed.stdout, 120, 36)
-    assert rendered.count("ONLINE") >= 3
-    assert "DISCONNECTED" in rendered or "CONNECTING" in rendered
+    states = {line.split()[0]: line.split()[1] for line in failed.stdout.splitlines()}
+    assert states.pop("dev-04") in ("DISCONNECTED", "CONNECTING"), failed.stdout
+    assert set(states) == set(aliases) - {"dev-04"} and set(states.values()) == {"ONLINE"}, failed.stdout
 
 for alias in ("-bad", "host;touch /tmp/should-not-exist", "user@host"):
     result = subprocess.run([client, "--ssh", alias, "--once"], capture_output=True, timeout=5)
     assert result.returncode != 0 and b"\x1b[?1049h" not in result.stdout
 
-print("Protocol lifecycle, all live groups, filter/sort, detail geometry, local PTY and four SSH transports: PASS")
+print("Protocol lifecycle, all live groups, filter/sort, detail geometry, local PTY and seven SSH transports: PASS")
